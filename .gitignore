@@ -1,0 +1,83 @@
+# ==========================================
+# LUCAO LINK - Git Ignore
+# ==========================================
+
+# --------------------
+# SEGREDOS / AMBIENTE
+# --------------------
+.env
+.env.*
+!.env.example
+
+*.key
+*.pem
+*.p12
+*.jks
+*.keystore
+
+# --------------------
+# NODE.JS
+# --------------------
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# --------------------
+# ANDROID / GRADLE
+# --------------------
+.gradle/
+**/build/
+local.properties
+
+# APK / AAB
+*.apk
+*.aab
+
+# --------------------
+# ANDROID STUDIO
+# --------------------
+.idea/
+*.iml
+captures/
+.externalNativeBuild/
+.cxx/
+
+# --------------------
+# VISUAL STUDIO CODE
+# --------------------
+.vscode/
+
+# --------------------
+# WINDOWS
+# --------------------
+Thumbs.db
+Desktop.ini
+*.lnk
+
+# --------------------
+# LOGS
+# --------------------
+*.log
+
+# --------------------
+# BACKUPS / CHECKPOINTS LOCAIS
+# --------------------
+*.bak
+*.backup
+*.tmp
+
+# --------------------
+# CAPTURAS DE VIDEO / AUDIO
+# --------------------
+*.h264
+*.264
+*.yuv
+*.raw
+*.pcm
+
+# --------------------
+# ARQUIVOS TEMPORARIOS
+# --------------------
+temp/
+tmp/
