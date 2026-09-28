@@ -8,6 +8,158 @@ The project is currently in active development.
 
 ## [Unreleased]
 
+### Checkpoint 21 - Live H.264 Streaming at 30 FPS
+
+#### Added
+
+- Live Android -> Windows H.264 video streaming over Wi-Fi.
+- New Windows live receiver:
+  `pc/live-receiver.js`
+- Direct H.264 playback through FFplay.
+- SPS and PPS transmission when the H.264 output format becomes available.
+- Dedicated network executor for video transport.
+- Updated Android interface with independent webcam and microphone controls.
+- Webcam ON/OFF state without destroying the camera pipeline.
+- H.264 keyframe request support when the webcam stream is enabled again.
+
+#### Verified
+
+Complete live video pipeline:
+
+```text
+Android Camera
+      |
+      v
+CameraX
+640x480 @ 30 FPS
+      |
+      v
+YUV_420_888
+      |
+      v
+Optimized NV12 conversion
+      |
+      v
+Qualcomm MediaCodec H.264
+      |
+      v
+TCP / Wi-Fi
+Port 5051
+      |
+      v
+Windows Node.js Receiver
+      |
+      v
+FFplay
+      |
+      v
+LIVE VIDEO
+```
+
+FFprobe successfully recognized the received stream:
+
+```text
+codec_name=h264
+width=640
+height=480
+```
+
+Final measured performance:
+
+```text
+Input:  29.9 - 30.1 FPS
+Output: 29.9 - 30.1 FPS
+Bitrate target: 2 Mbps
+Resolution: 640x480
+```
+
+#### Performance
+
+During initial live TCP testing, video processing dropped to approximately:
+
+```text
+25.5 FPS
+```
+
+The main bottleneck was identified in the
+YUV_420_888 -> NV12 conversion.
+
+The Y plane was being copied pixel by pixel, requiring approximately
+307,200 individual Y-plane reads for every 640x480 frame.
+
+A fast path was implemented for devices where:
+
+```text
+yPixelStride == 1
+```
+
+The optimized implementation copies complete Y rows instead of individual
+pixels.
+
+Performance improved from approximately:
+
+```text
+~25.5 FPS
+```
+
+to:
+
+```text
+~30.0 FPS
+```
+
+with stable encoder input and output rates.
+
+#### Improved
+
+- Removed per-frame `H264 ENVIADO` debug logging from the critical video path.
+- Reduced unnecessary work during live video streaming.
+- Separated TCP video writes from the main video processing path.
+- Preserved a fallback NV12 conversion path for devices with different
+  Y-plane layouts.
+- Improved perceived live-stream latency.
+- Changed the Windows H.264 capture receiver to append data during
+  development tests.
+- Added clean-capture testing to distinguish current video from previous
+  H.264 test data.
+
+#### Fixed
+
+- Restored missing CameraX analyzer executor initialization.
+- Restored the MediaCodec input-buffer queue path after it was accidentally
+  lost during development.
+- Fixed Android -> Windows H.264 transport validation.
+- Confirmed that previously displayed old footage was caused by appended
+  test captures rather than stale camera frames.
+- Confirmed continuous H.264 payload delivery over TCP.
+
+#### Current State
+
+LUCAO LINK can now transmit the Android camera to a Windows PC over Wi-Fi
+using hardware-encoded H.264 with live FFplay playback at approximately
+30 FPS.
+
+The core live video transport is operational.
+
+#### Next Development Targets
+
+- Dynamic Android camera capability detection.
+- Front/rear and physical lens selection.
+- Ultra-wide / telephoto options only when supported by the device.
+- Zoom and exposure controls.
+- Brightness, contrast, saturation, sharpness and color filters.
+- Camera controls from both Android and Windows.
+- Automatic reconnection after Wi-Fi interruptions.
+- Android microphone capture.
+- Microphone sensitivity and digital gain controls.
+- Audio level monitoring.
+- Noise reduction / AGC / echo cancellation when supported.
+- Windows virtual webcam.
+- Windows virtual microphone.
+
+---
+
+
 ### Checkpoint 20 - Windows TCP Transport
 
 #### Added

@@ -78,12 +78,21 @@ private volatile Socket videoSocket;
 private volatile OutputStream videoOutput;
 
     private TextView statusText;
-    private Button connectButton;
-    private PreviewView cameraPreview;
+private TextView connectionBadge;
+
+private Button connectButton;
+
+private PreviewView cameraPreview;
+
+private android.widget.Switch webcamSwitch;
+private android.widget.Switch microphoneSwitch;
 
     private ExecutorService cameraExecutor;
+    private ExecutorService networkExecutor;
 
     private volatile boolean pcConectado = false;
+    private volatile boolean cameraAtiva = true;
+    private volatile boolean solicitarKeyframeH264 = false;
     private long ultimoEnvio = 0;
 
     private static final String SERVER =
@@ -110,17 +119,50 @@ private volatile OutputStream videoOutput;
         super.onCreate(savedInstanceState);
 
         setContentView(R.layout.activity_main);
-
-        statusText = findViewById(R.id.statusText);
-        connectButton = findViewById(R.id.connectButton);
-        cameraPreview = findViewById(R.id.cameraPreview);
-
-        cameraExecutor =
-                Executors.newSingleThreadExecutor();
-
-        connectButton.setOnClickListener(
-                v -> testarConexao()
+cameraExecutor =
+        java.util.concurrent.Executors
+                .newSingleThreadExecutor();
+                networkExecutor =
+        new java.util.concurrent.ThreadPoolExecutor(
+                1,
+                1,
+                0L,
+                java.util.concurrent.TimeUnit.MILLISECONDS,
+                new java.util.concurrent.ArrayBlockingQueue<>(2),
+                new java.util.concurrent.ThreadPoolExecutor.CallerRunsPolicy()
         );
+        java.util.concurrent.Executors
+                .newSingleThreadExecutor();
+        statusText = findViewById(R.id.statusText);
+connectionBadge = findViewById(R.id.connectionBadge);
+
+connectButton = findViewById(R.id.connectButton);
+
+cameraPreview = findViewById(R.id.cameraPreview);
+
+webcamSwitch = findViewById(R.id.webcamSwitch);
+microphoneSwitch = findViewById(R.id.microphoneSwitch);
+cameraAtiva = webcamSwitch.isChecked();
+
+webcamSwitch.setOnCheckedChangeListener(
+        (buttonView, isChecked) -> {
+
+            cameraAtiva = isChecked;
+
+            if (isChecked) {
+    solicitarKeyframeH264 = true;
+}
+
+            Log.i(
+                    "LUCAO_UI",
+                    "WEBCAM " + (isChecked ? "ON" : "OFF")
+            );
+        }
+);
+
+connectButton.setOnClickListener(
+        v -> testarConexao()
+);
 
         verificarCamera();
 listarEncodersH264();
@@ -247,12 +289,16 @@ listarFormatosH264();
     try {
 
         if (!pcConectado) {
-            return;
-        }
+    return;
+}
 
-        // Caminho principal do LUCAO LINK:
-        // CameraX -> NV12 -> MediaCodec H.264
-        processarFrameH264(image);
+if (!cameraAtiva) {
+    return;
+}
+
+// Caminho principal do LUCAO LINK:
+// CameraX -> NV12 -> MediaCodec H.264
+processarFrameH264(image);
 
     } catch (Exception e) {
 
@@ -285,6 +331,29 @@ listarFormatosH264();
     int yRowStride = planes[0].getRowStride();
     int yPixelStride = planes[0].getPixelStride();
 
+    if (yPixelStride == 1) {
+
+    // Caminho rápido:
+    // copia uma linha Y inteira de uma vez.
+    for (int row = 0; row < height; row++) {
+
+        int rowStart =
+                yBase + row * yRowStride;
+
+        yBuffer.position(rowStart);
+
+        yBuffer.get(
+                nv12,
+                pos,
+                width
+        );
+
+        pos += width;
+    }
+
+} else {
+
+    // Fallback para dispositivos com layout diferente.
     for (int row = 0; row < height; row++) {
         for (int col = 0; col < width; col++) {
 
@@ -295,6 +364,7 @@ listarFormatosH264();
             );
         }
     }
+}
 
     ByteBuffer uBuffer = planes[1].getBuffer().duplicate();
     ByteBuffer vBuffer = planes[2].getBuffer().duplicate();
@@ -330,10 +400,43 @@ listarFormatosH264();
 
 private void processarFrameH264(ImageProxy image) {
 
+
     MediaCodec codec = h264Encoder;
 
     if (codec == null) {
         return;
+    }
+
+    // Se a webcam acabou de ser reativada,
+    // pede um novo keyframe ao encoder H.264.
+    if (solicitarKeyframeH264) {
+
+        try {
+
+            Bundle parametros = new Bundle();
+
+            parametros.putInt(
+                    MediaCodec.PARAMETER_KEY_REQUEST_SYNC_FRAME,
+                    0
+            );
+
+            codec.setParameters(parametros);
+
+            solicitarKeyframeH264 = false;
+
+            Log.i(
+                    "LUCAO_H264",
+                    "KEYFRAME SOLICITADO"
+            );
+
+        } catch (Exception e) {
+
+            Log.e(
+                    "LUCAO_H264",
+                    "ERRO AO SOLICITAR KEYFRAME",
+                    e
+            );
+        }
     }
 
     if (
@@ -361,57 +464,59 @@ private void processarFrameH264(ImageProxy image) {
         // ========================================
 
         int inputIndex =
-                codec.dequeueInputBuffer(0);
+        codec.dequeueInputBuffer(0);
 
-        if (inputIndex >= 0) {
+if (inputIndex >= 0) {
 
-            ByteBuffer inputBuffer =
-                    codec.getInputBuffer(inputIndex);
+    byte[] nv12 =
+            converterParaNV12(image);
 
-            if (inputBuffer != null) {
+    ByteBuffer inputBuffer =
+            codec.getInputBuffer(inputIndex);
 
-                byte[] nv12 =
-                        converterParaNV12(image);
+    if (inputBuffer != null) {
 
-                inputBuffer.clear();
+        inputBuffer.clear();
 
-                if (nv12.length <= inputBuffer.capacity()) {
+        if (inputBuffer.remaining() >= nv12.length) {
 
-                    inputBuffer.put(nv12);
+            inputBuffer.put(nv12);
 
-                    long ptsUs =
-                            image.getImageInfo()
-                                    .getTimestamp() / 1000L;
+            long presentationTimeUs =
+                    image.getImageInfo()
+                            .getTimestamp() / 1000L;
 
-                    codec.queueInputBuffer(
-                            inputIndex,
-                            0,
-                            nv12.length,
-                            ptsUs,
-                            0
-                    );
+            codec.queueInputBuffer(
+                    inputIndex,
+                    0,
+                    nv12.length,
+                    presentationTimeUs,
+                    0
+            );
 
-                    h264FramesEntrada++;
+            h264FramesEntrada++;
 
-                } else {
+        } else {
 
-                    Log.e(
-                            "LUCAO_H264",
-                            "FRAME MAIOR QUE BUFFER: " +
-                                    nv12.length + " > " +
-                                    inputBuffer.capacity()
-                    );
+            Log.e(
+                    "LUCAO_H264",
+                    "BUFFER H264 PEQUENO: " +
+                            inputBuffer.remaining() +
+                            " < " +
+                            nv12.length
+            );
 
-                    codec.queueInputBuffer(
-                            inputIndex,
-                            0,
-                            0,
-                            0,
-                            0
-                    );
-                }
-            }
+            codec.queueInputBuffer(
+                    inputIndex,
+                    0,
+                    0,
+                    image.getImageInfo()
+                            .getTimestamp() / 1000L,
+                    0
+            );
         }
+    }
+}
 
         // ========================================
         // SAIDA: MediaCodec -> H.264
@@ -430,31 +535,140 @@ private void processarFrameH264(ImageProxy image) {
 
             if (outputIndex >= 0) {
 
-                if (
-                        info.size > 0 &&
-                        (info.flags &
-                                MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0
-                ) {
+                if (info.size > 0) {
 
-                    h264FramesSaida++;
-                    h264BytesSaida += info.size;
-                }
+    ByteBuffer outputBuffer =
+            codec.getOutputBuffer(outputIndex);
 
-                codec.releaseOutputBuffer(
-                        outputIndex,
-                        false
-                );
+    if (outputBuffer != null) {
+
+        outputBuffer.position(info.offset);
+        outputBuffer.limit(
+                info.offset + info.size
+        );
+
+        byte[] h264 =
+                new byte[info.size];
+
+        outputBuffer.get(h264);
+
+        ExecutorService executor =
+        networkExecutor;
+
+if (executor != null) {
+
+    executor.execute(() -> {
+
+        OutputStream output =
+                videoOutput;
+
+        if (output == null) {
+            return;
+        }
+
+        try {
+
+            output.write(h264);
+
+        } catch (IOException e) {
+
+            Log.e(
+                    "LUCAO_TCP",
+                    "ERRO AO ENVIAR H264",
+                    e
+            );
+        }
+    });
+}
+
+        // Codec config contém SPS/PPS.
+        // Enviamos pelo TCP, mas não contamos
+        // como frame de vídeo.
+        if (
+                (info.flags &
+                        MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0
+        ) {
+
+            h264FramesSaida++;
+            h264BytesSaida += info.size;
+        }
+    }
+}
+
+codec.releaseOutputBuffer(
+        outputIndex,
+        false
+);
 
             } else if (
-                    outputIndex ==
-                    MediaCodec.INFO_OUTPUT_FORMAT_CHANGED
-            ) {
+        outputIndex ==
+        MediaCodec.INFO_OUTPUT_FORMAT_CHANGED
+) {
 
-                Log.i(
-                        "LUCAO_H264",
-                        "FORMATO H264: " +
-                                codec.getOutputFormat()
-                );
+    MediaFormat outputFormat =
+            codec.getOutputFormat();
+
+    Log.i(
+            "LUCAO_H264",
+            "FORMATO H264: " +
+                    outputFormat
+    );
+
+    OutputStream output =
+            videoOutput;
+
+    if (output != null) {
+
+        ByteBuffer sps =
+                outputFormat.getByteBuffer("csd-0");
+
+        ByteBuffer pps =
+                outputFormat.getByteBuffer("csd-1");
+
+        if (sps != null) {
+
+            ByteBuffer copiaSps =
+                    sps.duplicate();
+
+            copiaSps.position(0);
+
+            byte[] dadosSps =
+                    new byte[copiaSps.remaining()];
+
+            copiaSps.get(dadosSps);
+
+            output.write(dadosSps);
+
+            Log.i(
+                    "LUCAO_TCP",
+                    "SPS ENVIADO: " +
+                            dadosSps.length +
+                            " bytes"
+            );
+        }
+
+        if (pps != null) {
+
+            ByteBuffer copiaPps =
+                    pps.duplicate();
+
+            copiaPps.position(0);
+
+            byte[] dadosPps =
+                    new byte[copiaPps.remaining()];
+
+            copiaPps.get(dadosPps);
+
+            output.write(dadosPps);
+
+            Log.i(
+                    "LUCAO_TCP",
+                    "PPS ENVIADO: " +
+                            dadosPps.length +
+                            " bytes"
+            );
+        }
+    }
 
             } else {
 
@@ -781,8 +995,15 @@ private synchronized void conectarVideoTcp() {
 
     private void testarConexao() {
 
+        Log.i(
+        "LUCAO_NET",
+        "BOTAO CONECTAR - servidor=" + SERVER
+);
+
         statusText.setText("CONECTANDO...");
         statusText.setTextColor(Color.YELLOW);
+        connectionBadge.setText("● CONECTANDO");
+connectionBadge.setTextColor(Color.rgb(167, 139, 250));
 
         connectButton.setEnabled(false);
 
@@ -805,6 +1026,12 @@ private synchronized void conectarVideoTcp() {
                 int response =
                         connection.getResponseCode();
 
+                        Log.i(
+        "LUCAO_NET",
+        "HTTP RESPONSE=" + response
+);
+
+
                 if (
                         response >= 200 &&
                         response < 300
@@ -823,6 +1050,10 @@ private synchronized void conectarVideoTcp() {
                         statusText.setTextColor(
                                 Color.rgb(0, 255, 136)
                         );
+                        connectionBadge.setText("● CONECTADO");
+connectionBadge.setTextColor(
+        Color.rgb(57, 255, 136)
+);
 
                         connectButton.setText(
                                 "CONECTADO"
@@ -842,11 +1073,17 @@ private synchronized void conectarVideoTcp() {
 
             } catch (IOException e) {
 
-                pcConectado = false;
+    pcConectado = false;
 
-                mostrarErro(
-                        "PC NAO ENCONTRADO"
-                );
+    Log.e(
+            "LUCAO_NET",
+            "ERRO NA CONEXAO HTTP",
+            e
+    );
+
+    mostrarErro(
+            "PC NAO ENCONTRADO"
+    );
 
             } finally {
 
@@ -864,6 +1101,8 @@ private synchronized void conectarVideoTcp() {
 
             statusText.setText(mensagem);
             statusText.setTextColor(Color.RED);
+            connectionBadge.setText("● OFFLINE");
+connectionBadge.setTextColor(Color.RED);
 
             connectButton.setText(
                     "TENTAR NOVAMENTE"

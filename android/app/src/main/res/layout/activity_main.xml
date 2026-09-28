@@ -7,42 +7,201 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:background="#101010">
+    android:background="#0B0B0F"
+    android:padding="16dp">
 
-    <TextView
+    <!-- CABEÇALHO -->
+
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="LUCAO LINK"
-        android:textColor="#FFFFFF"
-        android:textSize="24sp"
-        android:textStyle="bold"
-        android:gravity="center"
-        android:padding="16dp" />
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingBottom="12dp">
 
-    <androidx.camera.view.PreviewView
-        android:id="@+id/cameraPreview"
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="LUCAO LINK"
+                android:textColor="#FFFFFF"
+                android:textSize="24sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="ANDROID → WINDOWS"
+                android:textColor="#8E8E9A"
+                android:textSize="11sp"
+                android:letterSpacing="0.12" />
+
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/connectionBadge"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="● OFFLINE"
+            android:textColor="#8E8E9A"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:padding="8dp" />
+
+    </LinearLayout>
+
+
+    <!-- PREVIEW DA CÂMERA -->
+
+    <FrameLayout
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
-        app:scaleType="fillCenter" />
+        android:background="#15151C">
+
+        <androidx.camera.view.PreviewView
+            android:id="@+id/cameraPreview"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            app:scaleType="fillCenter" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom|start"
+            android:layout_margin="10dp"
+            android:text="640 × 480  •  30 FPS  •  H.264"
+            android:textColor="#FFFFFF"
+            android:textSize="11sp"
+            android:background="#99000000"
+            android:padding="6dp" />
+
+    </FrameLayout>
+
+
+    <!-- STATUS -->
 
     <TextView
         android:id="@+id/statusText"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="DESCONECTADO"
+        android:text="PC DESCONECTADO"
         android:textColor="#FF5252"
-        android:textSize="16sp"
+        android:textSize="14sp"
         android:textStyle="bold"
         android:gravity="center"
-        android:paddingTop="12dp" />
+        android:paddingTop="12dp"
+        android:paddingBottom="12dp" />
+
+
+    <!-- WEBCAM -->
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="64dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:background="#15151C"
+        android:paddingStart="16dp"
+        android:paddingEnd="12dp"
+        android:layout_marginBottom="8dp">
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="WEBCAM"
+                android:textColor="#FFFFFF"
+                android:textSize="15sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="H.264  •  640 × 480  •  30 FPS"
+                android:textColor="#8E8E9A"
+                android:textSize="11sp" />
+
+        </LinearLayout>
+
+        <Switch
+    android:id="@+id/webcamSwitch"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:checked="true"
+    android:thumbTint="@color/switch_thumb_color"
+    android:trackTint="@color/switch_track_color" />
+
+    </LinearLayout>
+
+
+    <!-- MICROFONE -->
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="64dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:background="#15151C"
+        android:paddingStart="16dp"
+        android:paddingEnd="12dp"
+        android:layout_marginBottom="12dp">
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="MICROFONE"
+                android:textColor="#FFFFFF"
+                android:textSize="15sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="ÁUDIO • EM DESENVOLVIMENTO"
+                android:textColor="#8E8E9A"
+                android:textSize="11sp" />
+
+        </LinearLayout>
+
+        <Switch
+    android:id="@+id/microphoneSwitch"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:enabled="false"
+    android:checked="false"
+    android:thumbTint="@color/switch_thumb_color"
+    android:trackTint="@color/switch_track_color" />
+
+    </LinearLayout>
+
+
+    <!-- CONECTAR -->
 
     <Button
         android:id="@+id/connectButton"
-        android:layout_width="220dp"
-        android:layout_height="60dp"
-        android:layout_gravity="center"
-        android:layout_margin="16dp"
-        android:text="CONECTAR" />
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:text="CONECTAR AO PC"
+        android:textColor="#FFFFFF"
+        android:textStyle="bold"
+        android:textSize="14sp"
+        android:backgroundTint="#7C3AED" />
 
 </LinearLayout>

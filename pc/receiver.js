@@ -16,7 +16,10 @@ const server = net.createServer((socket) => {
         `${socket.remoteAddress}:${socket.remotePort}`
     );
 
-    const output = fs.createWriteStream(outputPath);
+    const output = fs.createWriteStream(
+    outputPath,
+    { flags: "a" }
+);
 
     totalBytes = 0;
 
