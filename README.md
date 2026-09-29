@@ -362,9 +362,10 @@ LUCAO-CAM/
 [x] Stable ~30 FPS live video
 [x] Independent webcam switch UI
 
-[ ] Dynamic camera capability detection
+[x] Dynamic camera capability detection
 [ ] Camera/lens selection
-[ ] Zoom controls
+[x] Zoom controls
+[x] Low-latency H.264 playback timing
 [ ] Exposure controls
 [ ] Image filters and adjustments
 [ ] Automatic network reconnection
@@ -413,7 +414,11 @@ LUCAO LINK is an experimental project under active development.
 
 The current milestone proves that an Android device can capture,
 hardware-encode and transmit H.264 video over Wi-Fi to a Windows PC
-at approximately 30 FPS with live playback.
+at approximately 30 FPS with low-latency live playback.
+
+Dynamic camera capability detection and CameraX zoom control are
+implemented. Zoom changes are preserved through the complete
+CameraX -> NV12 -> H.264 -> TCP -> Windows -> FFplay pipeline.
 
 Network protocols, interfaces and implementation details may continue
 to change during development.

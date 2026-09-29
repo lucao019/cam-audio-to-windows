@@ -10,19 +10,20 @@ const server = net.createServer((socket) => {
     console.log(`${socket.remoteAddress}:${socket.remotePort}`);
 
     const ffplay = spawn(
-        "ffplay",
-        [
-            "-loglevel", "warning",
-            "-fflags", "nobuffer",
-            "-flags", "low_delay",
-            "-framedrop",
-            "-f", "h264",
-            "-i", "pipe:0"
-        ],
-        {
-            stdio: ["pipe", "inherit", "inherit"]
-        }
-    );
+    "ffplay",
+    [
+        "-loglevel", "warning",
+        "-fflags", "nobuffer",
+        "-flags", "low_delay",
+        "-framedrop",
+        "-analyzeduration", "0",
+        "-probesize", "32",
+        "-framerate", "30",
+        "-f", "h264",
+        "-i", "pipe:0"
+    ],
+    { stdio: ["pipe", "inherit", "inherit"] }
+);
 
     console.log("FFPLAY INICIADO");
 

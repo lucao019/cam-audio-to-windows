@@ -101,15 +101,24 @@
 
     <!-- WEBCAM -->
 
+<LinearLayout
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="#15151C"
+    android:paddingStart="16dp"
+    android:paddingEnd="12dp"
+    android:paddingTop="12dp"
+    android:paddingBottom="12dp"
+    android:layout_marginBottom="8dp">
+
+    <!-- CABECALHO WEBCAM -->
+
     <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="64dp"
+        android:layout_height="wrap_content"
         android:orientation="horizontal"
-        android:gravity="center_vertical"
-        android:background="#15151C"
-        android:paddingStart="16dp"
-        android:paddingEnd="12dp"
-        android:layout_marginBottom="8dp">
+        android:gravity="center_vertical">
 
         <LinearLayout
             android:layout_width="0dp"
@@ -128,24 +137,90 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="H.264  •  640 × 480  •  30 FPS"
+                android:text="H.264 | 640 x 480 | 30 FPS"
                 android:textColor="#8E8E9A"
                 android:textSize="11sp" />
 
         </LinearLayout>
 
         <Switch
-    android:id="@+id/webcamSwitch"
-    android:layout_width="wrap_content"
-    android:layout_height="wrap_content"
-    android:checked="true"
-    android:thumbTint="@color/switch_thumb_color"
-    android:trackTint="@color/switch_track_color" />
+            android:id="@+id/webcamSwitch"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:checked="true"
+            android:thumbTint="@color/switch_thumb_color"
+            android:trackTint="@color/switch_track_color" />
 
     </LinearLayout>
 
+    <!-- ZOOM -->
 
-    <!-- MICROFONE -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="ZOOM"
+            android:textColor="#A78BFA"
+            android:textSize="11sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/zoomValueText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="2.0x"
+            android:textColor="#39FF88"
+            android:textSize="13sp"
+            android:textStyle="bold" />
+
+    </LinearLayout>
+
+    <SeekBar
+        android:id="@+id/zoomSeekBar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:max="100"
+        android:progress="11"
+        android:progressTint="#7C3AED"
+        android:thumbTint="#39FF88" />
+
+    <!-- LIMITES DO ZOOM -->
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal">
+
+        <TextView
+            android:id="@+id/zoomMinText"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="1.0x"
+            android:textColor="#70707A"
+            android:textSize="10sp" />
+
+        <TextView
+            android:id="@+id/zoomMaxText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="10.0x"
+            android:textColor="#70707A"
+            android:textSize="10sp" />
+
+    </LinearLayout>
+
+</LinearLayout>
+
+<!-- MICROFONE -->
 
     <LinearLayout
         android:layout_width="match_parent"

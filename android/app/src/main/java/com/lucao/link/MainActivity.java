@@ -1,5 +1,12 @@
 package com.lucao.link;
 
+
+import android.widget.SeekBar;
+import androidx.camera.core.Camera;
+import android.os.Build;
+import android.hardware.camera2.CameraCharacteristics;
+import android.hardware.camera2.CameraManager;
+import android.util.SizeF;
 import java.net.Socket;
 import java.io.OutputStream;
 import android.util.Range;
@@ -83,6 +90,12 @@ private TextView connectionBadge;
 private Button connectButton;
 
 private PreviewView cameraPreview;
+private Camera cameraAtual;
+
+private SeekBar zoomSeekBar;
+private TextView zoomValueText;
+private TextView zoomMinText;
+private TextView zoomMaxText;
 
 private android.widget.Switch webcamSwitch;
 private android.widget.Switch microphoneSwitch;
@@ -131,8 +144,58 @@ cameraExecutor =
                 new java.util.concurrent.ArrayBlockingQueue<>(2),
                 new java.util.concurrent.ThreadPoolExecutor.CallerRunsPolicy()
         );
+
+        detectarCamerasDisponiveis();
+
+        cameraPreview = findViewById(R.id.cameraPreview);
+webcamSwitch = findViewById(R.id.webcamSwitch);
+
+
+
         java.util.concurrent.Executors
                 .newSingleThreadExecutor();
+
+
+                zoomSeekBar = findViewById(R.id.zoomSeekBar);
+zoomValueText = findViewById(R.id.zoomValueText);
+zoomMinText = findViewById(R.id.zoomMinText);
+zoomMaxText = findViewById(R.id.zoomMaxText);
+
+                zoomSeekBar.setOnSeekBarChangeListener(
+        new SeekBar.OnSeekBarChangeListener() {
+
+            @Override
+            public void onProgressChanged(
+                    SeekBar seekBar,
+                    int progress,
+                    boolean fromUser
+            ) {
+
+                if (!fromUser || cameraAtual == null) {
+                    return;
+                }
+
+                float linearZoom =
+                        progress / 100.0f;
+
+                cameraAtual
+                        .getCameraControl()
+                        .setLinearZoom(linearZoom);
+            }
+
+            @Override
+            public void onStartTrackingTouch(
+                    SeekBar seekBar
+            ) {
+            }
+
+            @Override
+            public void onStopTrackingTouch(
+                    SeekBar seekBar
+            ) {
+            }
+        }
+);
         statusText = findViewById(R.id.statusText);
 connectionBadge = findViewById(R.id.connectionBadge);
 
@@ -185,6 +248,139 @@ listarFormatosH264();
             );
         }
     }
+
+private void detectarCamerasDisponiveis() {
+
+    try {
+
+        CameraManager cameraManager =
+                (CameraManager) getSystemService(CAMERA_SERVICE);
+
+        String[] cameraIds =
+                cameraManager.getCameraIdList();
+
+        Log.i(
+                "LUCAO_CAMERA",
+                "TOTAL CAMERAS EXPOSTAS: " +
+                        cameraIds.length
+        );
+
+        for (String cameraId : cameraIds) {
+
+            CameraCharacteristics info =
+                    cameraManager.getCameraCharacteristics(
+                            cameraId
+                    );
+
+            Integer facing =
+                    info.get(
+                            CameraCharacteristics.LENS_FACING
+                    );
+
+            float[] focais =
+                    info.get(
+                            CameraCharacteristics
+                                    .LENS_INFO_AVAILABLE_FOCAL_LENGTHS
+                    );
+
+            SizeF sensor =
+                    info.get(
+                            CameraCharacteristics
+                                    .SENSOR_INFO_PHYSICAL_SIZE
+                    );
+
+            Boolean flash =
+                    info.get(
+                            CameraCharacteristics.FLASH_INFO_AVAILABLE
+                    );
+
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+
+    java.util.Set<String> physicalIds =
+            info.getPhysicalCameraIds();
+
+    Log.i(
+            "LUCAO_CAMERA",
+            "ID=" + cameraId +
+            " | CAMERAS FISICAS=" +
+            physicalIds
+    );
+
+    Float maxDigitalZoom =
+        info.get(
+                CameraCharacteristics
+                        .SCALER_AVAILABLE_MAX_DIGITAL_ZOOM
+        );
+
+if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+
+    android.util.Range<Float> zoomRange =
+            info.get(
+                    CameraCharacteristics
+                            .CONTROL_ZOOM_RATIO_RANGE
+            );
+
+    Log.i(
+            "LUCAO_CAMERA",
+            "ID=" + cameraId +
+            " | ZOOM RANGE=" + zoomRange +
+            " | MAX DIGITAL=" + maxDigitalZoom
+    );
+
+} else {
+
+    Log.i(
+            "LUCAO_CAMERA",
+            "ID=" + cameraId +
+            " | MAX DIGITAL=" + maxDigitalZoom
+    );
+}
+
+
+}
+
+
+            String lado = "DESCONHECIDA";
+
+            if (facing != null) {
+
+                if (facing ==
+                        CameraCharacteristics.LENS_FACING_BACK) {
+
+                    lado = "TRASEIRA";
+
+                } else if (facing ==
+                        CameraCharacteristics.LENS_FACING_FRONT) {
+
+                    lado = "FRONTAL";
+
+                } else if (facing ==
+                        CameraCharacteristics.LENS_FACING_EXTERNAL) {
+
+                    lado = "EXTERNA";
+                }
+            }
+
+            Log.i(
+                    "LUCAO_CAMERA",
+                    "ID=" + cameraId +
+                    " | lado=" + lado +
+                    " | focais=" +
+                    java.util.Arrays.toString(focais) +
+                    " | sensor=" + sensor +
+                    " | flash=" + flash
+            );
+        }
+
+    } catch (Exception e) {
+
+        Log.e(
+                "LUCAO_CAMERA",
+                "ERRO AO DETECTAR CAMERAS",
+                e
+        );
+    }
+}
 
     private void iniciarCamera() {
 
@@ -255,12 +451,73 @@ listarFormatosH264();
 
             // Preview + análise.
             // NÃO usamos VideoCapture aqui.
-            cameraProvider.bindToLifecycle(
-                    this,
-                    cameraSelector,
-                    preview,
-                    imageAnalysis
-            );
+            cameraAtual =
+        cameraProvider.bindToLifecycle(
+                this,
+                cameraSelector,
+                preview,
+                imageAnalysis
+        );
+
+        cameraAtual
+        .getCameraInfo()
+        .getZoomState()
+        .observe(
+                this,
+                zoomState -> {
+
+                    if (zoomState == null) {
+                        return;
+                    }
+
+                    float atual =
+                            zoomState.getZoomRatio();
+
+                    float minimo =
+                            zoomState.getMinZoomRatio();
+
+                    float maximo =
+                            zoomState.getMaxZoomRatio();
+
+                    zoomValueText.setText(
+                            String.format(
+                                    java.util.Locale.US,
+                                    "%.1fx",
+                                    atual
+                            )
+                    );
+
+                    zoomMinText.setText(
+                            String.format(
+                                    java.util.Locale.US,
+                                    "%.1fx",
+                                    minimo
+                            )
+                    );
+
+                    zoomMaxText.setText(
+                            String.format(
+                                    java.util.Locale.US,
+                                    "%.1fx",
+                                    maximo
+                            )
+                    );
+
+                    int progresso =
+                            Math.round(
+                                    zoomState.getLinearZoom()
+                                            * 100
+                            );
+
+                    zoomSeekBar.setProgress(
+                            progresso
+                    );
+                }
+        );
+
+
+
+
 
             Log.i(
                     "LUCAO_H264",
@@ -807,6 +1064,11 @@ codec.releaseOutputBuffer(
                 MediaFormat.KEY_FRAME_RATE,
                 VIDEO_FPS
         );
+
+        format.setInteger(
+        MediaFormat.KEY_LATENCY,
+        1
+);
 
         format.setInteger(
                 MediaFormat.KEY_I_FRAME_INTERVAL,

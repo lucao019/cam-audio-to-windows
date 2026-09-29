@@ -8,6 +8,32 @@ The project is currently in active development.
 
 ## [Unreleased]
 
+### Checkpoint 22 - Camera Controls and Low-Latency H.264 Playback
+
+#### Added
+
+- Dynamic Android camera capability detection using Camera2 APIs.
+- Detection of available logical front and rear cameras.
+- Detection of zoom range, focal length, sensor size and flash support.
+- CameraX CameraControl integration.
+- Dynamic zoom control through the Android interface.
+- Zoom state synchronization using CameraX ZoomState.
+- Zoom value and minimum/maximum zoom indicators.
+- Encoder latency hint using MediaFormat.KEY_LATENCY.
+
+#### Device Capabilities Verified
+
+On the current Redmi device, Android exposes two logical cameras:
+
+```text
+Rear camera
+Zoom: 1.0x - 10.0x
+Flash: supported
+
+Front camera
+Zoom: 1.0x - 10.0x
+Flash: not supported
+
 ### Checkpoint 21 - Live H.264 Streaming at 30 FPS
 
 #### Added
