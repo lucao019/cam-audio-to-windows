@@ -78,7 +78,7 @@ private static final int VIDEO_HEIGHT = 480;
 private static final int VIDEO_FPS = 30;
 private static final int VIDEO_BITRATE = 2_000_000;
 
-private static final String VIDEO_HOST = "192.168.2.121";
+private static final String VIDEO_HOST = "127.0.0.1";
 private static final int VIDEO_PORT = 5051;
 
 private volatile Socket videoSocket;
@@ -109,10 +109,10 @@ private android.widget.Switch microphoneSwitch;
     private long ultimoEnvio = 0;
 
     private static final String SERVER =
-            "http://192.168.2.121:5050/";
+            "http://127.0.0.1:5050/";
 
     private static final String FRAME_URL =
-            "http://192.168.2.121:5050/frame";
+            "http://127.0.0.1:5050/frame";
 
     private final ActivityResultLauncher<String> cameraPermissionLauncher =
             registerForActivityResult(
@@ -225,6 +225,11 @@ webcamSwitch.setOnCheckedChangeListener(
 
 connectButton.setOnClickListener(
         v -> testarConexao()
+);
+
+connectButton.postDelayed(
+        this::testarConexao,
+        1000
 );
 
         verificarCamera();
@@ -1075,16 +1080,21 @@ codec.releaseOutputBuffer(
                 1
         );
 
-        codec = MediaCodec.createByCodecName(
-                "OMX.qcom.video.encoder.avc"
-        );
+        codec = MediaCodec.createEncoderByType(
+        MediaFormat.MIMETYPE_VIDEO_AVC
+);
 
-        codec.configure(
-                format,
-                null,
-                null,
-                MediaCodec.CONFIGURE_FLAG_ENCODE
-        );
+Log.i(
+        "LUCAO_CODEC",
+        "ENCODER H264 SELECIONADO: " + codec.getName()
+);
+
+codec.configure(
+        format,
+        null,
+        null,
+        MediaCodec.CONFIGURE_FLAG_ENCODE
+);
 
         codec.start();
 
@@ -1164,28 +1174,46 @@ private void listarFormatosH264() {
                 );
 
         for (MediaCodecInfo info :
-                codecList.getCodecInfos()) {
+        codecList.getCodecInfos()) {
 
-            if (
-                    info.isEncoder() &&
-                    info.getName().equals(
-                            "OMX.qcom.video.encoder.avc"
-                    )
-            ) {
+    if (!info.isEncoder()) {
+        continue;
+    }
+
+    for (String tipo : info.getSupportedTypes()) {
+
+        if (tipo.equalsIgnoreCase(
+                MediaFormat.MIMETYPE_VIDEO_AVC
+        )) {
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+                    info.isHardwareAccelerated()) {
+
                 codecInfo = info;
                 break;
             }
         }
+    }
+
+    if (codecInfo != null) {
+        break;
+    }
+}
 
         if (codecInfo == null) {
 
-            Log.e(
-                    "LUCAO_FORMAT",
-                    "ENCODER QUALCOMM NAO ENCONTRADO"
-            );
+    Log.e(
+            "LUCAO_FORMAT",
+            "ENCODER H264 DE HARDWARE NAO ENCONTRADO"
+    );
 
-            return;
-        }
+    return;
+}
+
+Log.i(
+        "LUCAO_FORMAT",
+        "ANALISANDO ENCODER: " + codecInfo.getName()
+);
 
         MediaCodecInfo.CodecCapabilities caps =
                 codecInfo.getCapabilitiesForType(

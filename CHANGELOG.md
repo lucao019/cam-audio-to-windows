@@ -1,3 +1,36 @@
+## Checkpoint 24 — Dedicated USB Mode
+
+### Adicionado
+- Modo experimental de câmera dedicada via USB.
+- Transporte por ADB Reverse nas portas 5050 e 5051.
+- Android usando `127.0.0.1` para comunicação com o PC no modo USB.
+- Auto Connect aproximadamente 1 segundo após iniciar o aplicativo.
+- Seleção dinâmica do encoder H.264.
+- Suporte validado no Motorola Moto G22 com Android 12.
+- Encoder de hardware detectado e utilizado: `c2.mtk.avc.encoder`.
+
+### Alterado
+- Removida a dependência do encoder Qualcomm `OMX.qcom.video.encoder.avc`.
+- `live-receiver.js` passou a encaminhar o socket H.264 usando `socket.pipe(ffplay.stdin)`.
+- O botão CONECTAR permanece disponível como fallback manual.
+
+### Validado
+- CameraX em 640x480 @ 30 FPS.
+- H.264 em aproximadamente 2 Mbps.
+- Streaming de vídeo completamente via USB, sem depender de Wi-Fi.
+- Auto Connect funcionando sem interação com a tela do Moto G22.
+- Uma inicialização controlada gera uma única conexão e uma única janela FFplay.
+- FFplay direto apresentou latência praticamente imperceptível.
+
+### Pendências
+- Pequena latência adicional no caminho `Node -> FFplay`.
+- Recriação automática dos túneis ADB Reverse após reconexão USB.
+- Reconexão automática completa.
+- Windows Companion para automatizar o modo dedicado.
+
+### Próximo passo
+Criar o Windows Companion responsável por detectar o dispositivo ADB, recriar os túneis 5050/5051, iniciar os serviços do LUCAO LINK e abrir automaticamente o aplicativo Android.
+
 # Changelog
 
 All notable development changes to LUCAO LINK will be documented in this file.

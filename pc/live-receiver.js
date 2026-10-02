@@ -27,19 +27,10 @@ const server = net.createServer((socket) => {
 
     console.log("FFPLAY INICIADO");
 
-    socket.on("data", (data) => {
-        if (!ffplay.stdin.destroyed) {
-            ffplay.stdin.write(data);
-        }
-    });
-
+    socket.pipe(ffplay.stdin);
     socket.on("end", () => {
-        console.log("ANDROID DESCONECTADO");
-
-        if (!ffplay.stdin.destroyed) {
-            ffplay.stdin.end();
-        }
-    });
+    console.log("ANDROID DESCONECTADO");
+});
 
     socket.on("error", (error) => {
         console.error(

@@ -453,3 +453,34 @@ CameraX -> NV12 -> H.264 -> TCP -> Windows -> FFplay pipeline.
 
 Network protocols, interfaces and implementation details may continue
 to change during development.
+
+## Checkpoint 24 — Dedicated USB Mode
+
+O LUCAO LINK agora possui uma implementação experimental de modo dedicado via USB, testada em um Motorola Moto G22 com Android 12.
+
+### Hardware testado
+
+- Motorola Moto G22
+- Android 12 / API 31
+- MediaTek MT6765
+- Conexão USB com ADB
+- CameraX em 640x480 @ 30 FPS
+- H.264 em aproximadamente 2 Mbps
+
+### Transporte USB
+
+O Android utiliza localhost:
+
+- HTTP: `127.0.0.1:5050`
+- Vídeo H.264: `127.0.0.1:5051`
+
+O ADB Reverse cria os túneis:
+
+```text
+Android 127.0.0.1:5050
+        ↓ USB / ADB Reverse
+Windows :5050
+
+Android 127.0.0.1:5051
+        ↓ USB / ADB Reverse
+Windows :5051
