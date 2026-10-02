@@ -1,6 +1,8 @@
-const { execFile, spawn } = require("child_process");
+﻿const { execFile, spawn } = require("child_process");
 const net = require("net");
 const path = require("path");
+
+let processoReceiver = null;
 
 function executarADB(argumentos) {
     return new Promise((resolve, reject) => {
@@ -41,7 +43,7 @@ function portaEmUso(porta) {
 
 async function garantirServidorHTTP() {
     if (await portaEmUso(5050)) {
-        console.log("Servidor HTTP 5050 já está ativo.");
+        console.log("Servidor HTTP 5050 jÃ¡ estÃ¡ ativo.");
         return;
     }
 
@@ -68,12 +70,16 @@ async function garantirServidorHTTP() {
 }
 
 async function garantirReceiverVideo() {
-    if (await portaEmUso(5051)) {
-        console.log("Receiver de vídeo 5051 já está ativo.");
+    if (
+        processoReceiver &&
+        processoReceiver.exitCode === null &&
+        !processoReceiver.killed
+    ) {
+        console.log("Receiver de vÃ­deo 5051 jÃ¡ estÃ¡ ativo.");
         return;
     }
 
-    console.log("Iniciando receiver de vídeo 5051...");
+    console.log("Iniciando receiver de vÃ­deo 5051...");
 
     const receiverPath = path.resolve(
         __dirname,
@@ -81,15 +87,19 @@ async function garantirReceiverVideo() {
         "live-receiver.js"
     );
 
-    spawn(
+    processoReceiver = spawn(
         process.execPath,
         [receiverPath],
         {
             cwd: path.dirname(receiverPath),
             stdio: "inherit",
-            windowsHide: true
+            windowsHide: false
         }
     );
+
+    processoReceiver.on("exit", () => {
+        processoReceiver = null;
+    });
 
     console.log("live-receiver.js iniciado.");
 }
@@ -116,14 +126,14 @@ async function iniciar() {
         );
 
         if (disponiveis.length === 0) {
-            console.log("Nenhum Android disponível.");
+            console.log("Nenhum Android disponÃ­vel.");
             return;
         }
 
         for (const dispositivo of disponiveis) {
             const serial = dispositivo.serial;
 
-            console.log("Configurando túneis USB...");
+            console.log("Configurando tÃºneis USB...");
 
 await executarADB([
     "-s",
@@ -221,7 +231,7 @@ async function monitorar() {
                 ? dispositivo.serial
                 : null;
 
-            // Detectou mudança no USB
+            // Detectou mudanÃ§a no USB
             if (serialAtual !== dispositivoAnterior) {
 
                 if (serialAtual) {
@@ -276,16 +286,7 @@ async function monitorar() {
                 dispositivoAnterior = serialAtual;
             }
 
-            // Verifica se o receiver continua vivo
-            if (serialAtual) {
-    const receiverAtivo = await portaEmUso(5051);
 
-    if (!receiverAtivo) {
-        console.log(
-            "ALERTA: receiver 5051 caiu."
-        );
-    }
-}
 
         } catch (erro) {
             console.error(

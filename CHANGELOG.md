@@ -496,3 +496,31 @@ Virtual Microphone
 ```
 
 Automatic reconnection and independent webcam/microphone controls are also planned.
+
+---
+
+## Checkpoint 26 - Automatic USB Video Reconnection
+
+### Added
+
+- Automatic Android TCP video reconnection.
+- Persistent H.264 SPS/PPS for decoder recovery.
+- Automatic SPS/PPS resend after reconnect.
+- Automatic H.264 keyframe request after reconnect.
+- Dedicated ordered H.264 writer executor.
+- Windows Companion ownership of the video receiver process.
+- Automatic recovery after physical USB disconnect/reconnect.
+
+### Fixed
+
+- Removed port 5051 health probing that created false receiver connections.
+- Fixed FFplay receiver window being hidden.
+- Fixed receiver lifecycle handling during USB reconnection.
+
+### Validated
+
+Physical USB disconnect/reconnect successfully restores the complete video pipeline automatically.
+
+```text
+Moto G22 -> H.264 -> ADB Reverse -> USB -> Windows -> FFplay
+640x480 @ ~30 FPS

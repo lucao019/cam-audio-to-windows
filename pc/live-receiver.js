@@ -30,7 +30,7 @@ const server = net.createServer((socket) => {
 
     socketAtivo = socket;
 
-    const ffplay = spawn(
+        const ffplay = spawn(
         "ffplay",
         [
             "-loglevel", "warning",
@@ -43,9 +43,9 @@ const server = net.createServer((socket) => {
             "-f", "h264",
             "-i", "pipe:0"
         ],
-        {
-            stdio: ["pipe", "ignore", "ignore"],
-            windowsHide: true
+                {
+            stdio: ["pipe", "inherit", "inherit"],
+            windowsHide: false
         }
     );
 

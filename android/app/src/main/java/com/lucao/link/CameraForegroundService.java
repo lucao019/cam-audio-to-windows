@@ -76,6 +76,9 @@ public class CameraForegroundService extends Service
 
     private volatile MediaCodec h264Encoder;
 
+    private volatile byte[] h264Sps;
+    private volatile byte[] h264Pps;
+
     private volatile Socket videoSocket;
     private volatile OutputStream videoOutput;
 
@@ -85,6 +88,8 @@ public class CameraForegroundService extends Service
 
     private ExecutorService cameraExecutor;
     private ExecutorService networkExecutor;
+    private ExecutorService videoWriterExecutor;
+
     private ProcessCameraProvider cameraProvider;
     private Camera cameraAtual;
 
@@ -95,6 +100,9 @@ public class CameraForegroundService extends Service
     private volatile boolean pcConectado = false;
     private volatile boolean cameraAtiva = true;
     private volatile boolean solicitarKeyframeH264 = false;
+    private volatile boolean servicoAtivo = true;
+    private final java.util.concurrent.atomic.AtomicBoolean reconectandoVideo =
+        new java.util.concurrent.atomic.AtomicBoolean(false);
 
     // ============================================================
     // ESTATISTICAS H264
@@ -121,7 +129,10 @@ cameraExecutor =
         Executors.newSingleThreadExecutor();
 
     networkExecutor =
-            Executors.newFixedThreadPool(2);
+        Executors.newFixedThreadPool(2);
+
+videoWriterExecutor =
+        Executors.newSingleThreadExecutor();
 
     // Lifecycle usado pelo CameraX
     lifecycleRegistry =
@@ -162,47 +173,49 @@ cameraExecutor =
             Lifecycle.State.STARTED
     );
 
-    // TCP + encoder rodam fora da main thread
-    networkExecutor.execute(() -> {
+// TCP + encoder rodam fora da main thread
+networkExecutor.execute(() -> {
 
-        Log.i(
+    Log.i(
+            "LUCAO_SERVICE",
+            "INICIANDO PIPELINE"
+    );
+
+    conectarVideoTcp();
+
+    if (videoOutput == null) {
+
+        Log.w(
                 "LUCAO_SERVICE",
-                "INICIANDO PIPELINE"
+                "TCP 5051 INDISPONIVEL - AGUARDANDO PC"
         );
 
-        conectarVideoTcp();
+        iniciarReconexaoVideo();
 
-        if (videoOutput == null) {
-
-            Log.e(
-                    "LUCAO_SERVICE",
-                    "TCP 5051 INDISPONIVEL"
-            );
-
-            return;
-        }
+    } else {
 
         pcConectado = true;
+    }
 
-        prepararEncoderH264();
+    prepararEncoderH264();
 
-        Log.i(
-                "LUCAO_SERVICE",
-                "SOLICITANDO INICIO DA CAMERA"
-        );
+    Log.i(
+            "LUCAO_SERVICE",
+            "SOLICITANDO INICIO DA CAMERA"
+    );
 
-        ContextCompat
-                .getMainExecutor(this)
-                .execute(() -> {
+    ContextCompat
+            .getMainExecutor(this)
+            .execute(() -> {
 
-                    Log.i(
-                            "LUCAO_SERVICE",
-                            "EXECUTANDO iniciarCamera() NA MAIN THREAD"
-                    );
+                Log.i(
+                        "LUCAO_SERVICE",
+                        "EXECUTANDO iniciarCamera() NA MAIN THREAD"
+                );
 
-                    iniciarCamera();
-                });
-    });
+                iniciarCamera();
+            });
+});
 }
 
 
@@ -268,6 +281,144 @@ cameraExecutor =
             "LUCAO_TCP",
             "CONEXAO TCP DESCARTADA"
     );
+}
+
+private boolean enviarCabecalhoH264() {
+
+    OutputStream output =
+            videoOutput;
+
+    if (output == null) {
+        return false;
+    }
+
+    byte[] sps =
+            h264Sps;
+
+    byte[] pps =
+            h264Pps;
+
+    // Primeira inicialização:
+    // o encoder ainda pode não ter produzido SPS/PPS.
+    if (sps == null || pps == null) {
+
+        Log.w(
+                "LUCAO_TCP",
+                "SPS/PPS AINDA NAO DISPONIVEIS"
+        );
+
+        return true;
+    }
+
+    try {
+
+        output.write(sps);
+        output.write(pps);
+        output.flush();
+
+        Log.i(
+                "LUCAO_TCP",
+                "SPS/PPS REENVIADOS: " +
+                        sps.length +
+                        " + " +
+                        pps.length +
+                        " bytes"
+        );
+
+        return true;
+
+    } catch (IOException e) {
+
+        Log.e(
+                "LUCAO_TCP",
+                "ERRO AO REENVIAR SPS/PPS: " +
+                        e.getMessage()
+        );
+
+        desconectarVideoTcp();
+
+        return false;
+    }
+}
+
+private void iniciarReconexaoVideo() {
+
+    if (!servicoAtivo) {
+        return;
+    }
+
+    if (!reconectandoVideo.compareAndSet(false, true)) {
+        return;
+    }
+
+    ExecutorService executor = networkExecutor;
+
+    if (executor == null || executor.isShutdown()) {
+        reconectandoVideo.set(false);
+        return;
+    }
+
+    executor.execute(() -> {
+
+        Log.w(
+                "LUCAO_TCP",
+                "INICIANDO RECONEXAO AUTOMATICA"
+        );
+
+        try {
+
+            while (
+                    servicoAtivo &&
+                    videoOutput == null
+            ) {
+
+                conectarVideoTcp();
+
+                if (videoOutput != null) {
+
+    if (!enviarCabecalhoH264()) {
+
+        Log.w(
+                "LUCAO_TCP",
+                "FALHA NO CABECALHO - CONTINUANDO RECONEXAO"
+        );
+
+        continue;
+    }
+
+    pcConectado = true;
+
+    solicitarKeyframeH264 = true;
+
+    Log.i(
+            "LUCAO_TCP",
+            "VIDEO TCP RECONECTADO - KEYFRAME PENDENTE"
+    );
+
+    break;
+}
+
+                Log.w(
+                        "LUCAO_TCP",
+                        "PC INDISPONIVEL - NOVA TENTATIVA EM 1s"
+                );
+
+                try {
+
+                    Thread.sleep(1000);
+
+                } catch (InterruptedException e) {
+
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+
+        } finally {
+
+            reconectandoVideo.set(false);
+        }
+    });
 }
 
     private synchronized void conectarVideoTcp() {
@@ -865,10 +1016,9 @@ Log.i(
                             );
 
                             ExecutorService executor =
-        networkExecutor;
+        videoWriterExecutor;
 
 if (executor != null) {
-
     executor.execute(() -> {
 
         OutputStream output =
@@ -892,31 +1042,7 @@ if (executor != null) {
 
             desconectarVideoTcp();
 
-            try {
-
-                Thread.sleep(500);
-
-            } catch (InterruptedException e2) {
-
-                Thread.currentThread()
-                        .interrupt();
-
-                return;
-            }
-
-            conectarVideoTcp();
-
-            if (videoOutput != null) {
-
-                pcConectado = true;
-
-                solicitarKeyframeH264 = true;
-
-                Log.i(
-        "LUCAO_TCP",
-        "VIDEO TCP RECONECTADO"
-);
-            }
+            iniciarReconexaoVideo();
         }
     });
 }
@@ -974,59 +1100,63 @@ if (executor != null) {
 
                         if (sps != null) {
 
-                            ByteBuffer copiaSps =
-                                    sps.duplicate();
+    ByteBuffer copiaSps =
+            sps.duplicate();
 
-                            copiaSps.position(0);
+    copiaSps.position(0);
 
-                            byte[] dadosSps =
-                                    new byte[
-                                            copiaSps.remaining()
-                                    ];
+    byte[] dadosSps =
+            new byte[
+                    copiaSps.remaining()
+            ];
 
-                            copiaSps.get(
-                                    dadosSps
-                            );
+    copiaSps.get(
+            dadosSps
+    );
 
-                            output.write(
-                                    dadosSps
-                            );
+    h264Sps = dadosSps;
 
-                            Log.i(
-                                    "LUCAO_TCP",
-                                    "SPS ENVIADO: " +
-                                            dadosSps.length +
-                                            " bytes"
-                            );
-                        }
+    output.write(
+            dadosSps
+    );
+
+    Log.i(
+            "LUCAO_TCP",
+            "SPS ENVIADO E ARMAZENADO: " +
+                    dadosSps.length +
+                    " bytes"
+    );
+}
 
                         if (pps != null) {
 
-                            ByteBuffer copiaPps =
-                                    pps.duplicate();
+    ByteBuffer copiaPps =
+            pps.duplicate();
 
-                            copiaPps.position(0);
+    copiaPps.position(0);
 
-                            byte[] dadosPps =
-                                    new byte[
-                                            copiaPps.remaining()
-                                    ];
+    byte[] dadosPps =
+            new byte[
+                    copiaPps.remaining()
+            ];
 
-                            copiaPps.get(
-                                    dadosPps
-                            );
+    copiaPps.get(
+            dadosPps
+    );
 
-                            output.write(
-                                    dadosPps
-                            );
+    h264Pps = dadosPps;
 
-                            Log.i(
-                                    "LUCAO_TCP",
-                                    "PPS ENVIADO: " +
-                                            dadosPps.length +
-                                            " bytes"
-                            );
-                        }
+    output.write(
+            dadosPps
+    );
+
+    Log.i(
+            "LUCAO_TCP",
+            "PPS ENVIADO E ARMAZENADO: " +
+                    dadosPps.length +
+                    " bytes"
+    );
+}
                     }
 
                 } else {
@@ -1216,6 +1346,8 @@ if (executor != null) {
     @Override
     public void onDestroy() {
 
+        servicoAtivo = false;
+
         if (lifecycleRegistry != null) {
 
             lifecycleRegistry.setCurrentState(
@@ -1265,6 +1397,9 @@ if (executor != null) {
         if (networkExecutor != null) {
             networkExecutor.shutdown();
         }
+        if (videoWriterExecutor != null) {
+    videoWriterExecutor.shutdown();
+}
 
         super.onDestroy();
     }

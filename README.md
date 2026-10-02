@@ -624,3 +624,63 @@ Windows :5050
 Android 127.0.0.1:5051
         ↓ USB / ADB Reverse
 Windows :5051
+---
+
+
+## Checkpoint 26 - Automatic USB Video Reconnection
+
+Automatic recovery of the dedicated USB video pipeline was implemented and validated.
+
+### Android
+
+- Detects H.264 TCP connection loss automatically.
+- Retries the video connection while the service remains active.
+- Stores H.264 SPS/PPS for reconnection.
+- Resends SPS/PPS after the TCP connection returns.
+- Requests a new H.264 keyframe after reconnection.
+- Uses a dedicated single-thread executor for ordered H.264 writes.
+
+### Windows Receiver
+
+- FFplay output is now visible for the dedicated video receiver.
+- FFplay runs with low-latency H.264 options.
+- Video playback was validated with near-instant perceived latency.
+
+### Windows Companion
+
+- The Companion now owns the video receiver process.
+- Removed TCP probing of port 5051 that was creating false Android connections.
+- Tracks the receiver process directly.
+- Recreates ADB Reverse mappings after USB reconnection.
+- Restarts the Android connection flow automatically.
+
+### Physical USB Reconnection Test
+
+Validated sequence:
+
+```text
+VIDEO RUNNING
+      |
+      v
+USB DISCONNECTED
+      |
+      v
+ADB DEVICE DISAPPEARS
+      |
+      v
+USB RECONNECTED
+      |
+      v
+COMPANION DETECTS DEVICE
+      |
+      v
+ADB REVERSE RESTORED
+      |
+      v
+ANDROID TCP RECONNECTS
+      |
+      v
+SPS/PPS + KEYFRAME
+      |
+      v
+VIDEO RETURNS AUTOMATICALLY
