@@ -345,6 +345,37 @@ LUCAO-CAM/
 
 ---
 
+## Dedicated Webcam Mode
+
+LUCAO LINK is also planned to support Android phones used exclusively
+as dedicated webcam devices.
+
+The goal is to allow an old or damaged-screen Android phone to operate
+without requiring normal interaction with the phone display.
+
+Planned architecture:
+
+```text
+Dedicated Android Phone
+        |
+        | USB or Wi-Fi
+        v
+LUCAO LINK Windows
+        |
+        +-- Automatic device detection
+        +-- Camera controls from the PC
+        +-- Automatic connection
+        +-- Automatic reconnection
+        +-- Headless / minimal phone interaction
+        |
+        v
+Virtual Webcam
+        |
+        +-- OBS
+        +-- Discord
+        +-- Browser
+        `-- Other Windows applications
+
 ## Development Roadmap
 
 ```text
