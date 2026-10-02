@@ -1,3 +1,115 @@
+## Checkpoint 25 — Foreground Service + Stable 30 FPS USB
+
+### Adicionado
+
+- `CameraForegroundService` para manter o pipeline de câmera fora da Activity.
+- `LifecycleRegistry` para permitir o uso do CameraX dentro do Foreground Service.
+- Notificação persistente do LUCAO LINK durante o funcionamento da webcam.
+- Detecção das faixas de FPS disponíveis pela Camera2 API.
+- Solicitação explícita de `30 FPS` usando a faixa `[30,30]`.
+- Integração Camera2Interop com o CameraX para controlar o FPS da captura.
+- Estrutura inicial do Windows Companion para o modo dedicado via USB.
+
+### Alterado
+
+- O pipeline de vídeo passou a pertencer exclusivamente ao `CameraForegroundService`.
+- `MainActivity` deixou de iniciar uma segunda conexão TCP e um segundo encoder H.264.
+- O encoder H.264 passou a ser selecionado dinamicamente pelo Android.
+- No Moto G22, o encoder selecionado é:
+
+```text
+```
+
+### Corrigido
+
+- Corrigida a criação duplicada do pipeline de vídeo entre `MainActivity` e `CameraForegroundService`.
+- Eliminada a segunda conexão TCP e o segundo encoder H.264.
+- Identificado que os aproximadamente `14 FPS` não eram causados pelo encoder ou pelo transporte USB.
+- Identificado que o CameraX estava selecionando automaticamente uma faixa de FPS inferior.
+- Confirmado pela Camera2 que a câmera traseira do Moto G22 suporta a faixa `[30,30]`.
+- CameraX passou a solicitar explicitamente `30 FPS`.
+
+### Validado
+
+Configuração atual:
+
+```text
+Dispositivo: Motorola Moto G22
+Android: 12 / API 31
+Resolução: 640x480
+FPS solicitado: 30
+Codec: H.264 / AVC
+Bitrate: ~2 Mbps
+Encoder: c2.mtk.avc.encoder
+Transporte: USB / ADB Reverse
+Porta de vídeo: 5051
+```
+
+Desempenho medido após estabilização:
+
+```text
+Entrada H.264: 29.5 - 29.8 FPS
+Saída H.264:   29.5 - 29.8 FPS
+```
+
+O encoder acompanhou praticamente todos os frames entregues pela câmera.
+
+O transporte TCP permaneceu estável durante o teste:
+
+```text
+VIDEO TCP CONECTADO: 127.0.0.1:5051
+SPS ENVIADO: 23 bytes
+PPS ENVIADO: 8 bytes
+```
+
+Nenhum `Broken pipe` foi observado durante o teste final.
+
+### Estado Atual
+
+Pipeline validado:
+
+```text
+Moto G22
+   ↓
+CameraX
+640x480 @ 30 FPS
+   ↓
+YUV_420_888
+   ↓
+NV12
+   ↓
+MediaCodec
+c2.mtk.avc.encoder
+   ↓
+H.264 ~2 Mbps
+   ↓
+TCP 5051
+   ↓
+ADB Reverse
+   ↓
+USB
+   ↓
+Windows
+   ↓
+Node.js Receiver
+   ↓
+FFplay
+```
+
+O pipeline USB de vídeo está funcionando de forma estável em aproximadamente 30 FPS.
+
+### Próximos passos
+
+- Finalizar a reconexão automática persistente do TCP de vídeo.
+- Consolidar o Windows Companion.
+- Automatizar completamente a recuperação após desconectar e reconectar o USB.
+- Remover logs temporários de diagnóstico.
+- Continuar o modo de câmera dedicada sem necessidade de interação com a tela.
+- Implementar câmera virtual no Windows.
+- Iniciar posteriormente o pipeline de áudio/microfone.
+
+---c2.mtk.avc.encoder
+
 ## Checkpoint 24 — Dedicated USB Mode
 
 ### Adicionado

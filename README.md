@@ -454,7 +454,147 @@ CameraX -> NV12 -> H.264 -> TCP -> Windows -> FFplay pipeline.
 Network protocols, interfaces and implementation details may continue
 to change during development.
 
-## Checkpoint 24 — Dedicated USB Mode
+## Checkpoint 25 — Stable Dedicated USB Pipeline
+
+The dedicated USB architecture has now been validated on a Motorola Moto G22.
+
+Current tested configuration:
+
+```text
+Device: Motorola Moto G22
+Android: 12 / API 31
+Resolution: 640x480
+Frame rate: 30 FPS
+Codec: H.264 / AVC
+Bitrate: ~2 Mbps
+Encoder: c2.mtk.avc.encoder
+Transport: USB / ADB Reverse
+Video port: 5051
+```
+
+### Current Pipeline
+
+```text
+Moto G22
+    |
+    v
+CameraForegroundService
+    |
+    v
+CameraX
+640x480 @ 30 FPS
+    |
+    v
+YUV_420_888
+    |
+    v
+NV12
+    |
+    v
+MediaCodec H.264
+c2.mtk.avc.encoder
+    |
+    v
+TCP 127.0.0.1:5051
+    |
+    v
+ADB Reverse
+    |
+    v
+USB
+    |
+    v
+Windows :5051
+    |
+    v
+Node.js Live Receiver
+    |
+    v
+FFplay
+```
+
+### Foreground Camera Service
+
+The video pipeline is now owned by `CameraForegroundService`.
+
+This separates camera capture and H.264 streaming from `MainActivity`
+and prepares LUCAO LINK for dedicated webcam operation with minimal
+interaction with the Android device.
+
+A previous duplicate pipeline condition was fixed. `MainActivity` no
+longer starts a second TCP connection or a second H.264 encoder.
+
+### Stable 30 FPS Capture
+
+Camera2 capability detection on the Moto G22 confirmed support for:
+
+```text
+[10,10]
+[15,15]
+[15,20]
+[20,20]
+[5,30]
+[30,30]
+```
+
+CameraX now explicitly requests:
+
+```text
+[30,30]
+```
+
+Before this change, the service pipeline operated at approximately
+14 FPS.
+
+After explicitly requesting the supported 30 FPS range:
+
+```text
+Input:  29.5 - 29.8 FPS
+Output: 29.5 - 29.8 FPS
+```
+
+The H.264 encoder is therefore keeping pace with the frames delivered
+by CameraX.
+
+### USB Transport Validation
+
+The final validated transport is:
+
+```text
+Android
+127.0.0.1:5051
+    |
+    v
+ADB Reverse
+    |
+    v
+USB
+    |
+    v
+Windows :5051
+```
+
+H.264 initialization was successfully transmitted:
+
+```text
+SPS: 23 bytes
+PPS: 8 bytes
+```
+
+No `Broken pipe` errors were observed during the final validation.
+
+Current dedicated USB video milestone:
+
+```text
+640x480
+~30 FPS
+H.264
+~2 Mbps
+USB / ADB Reverse
+STABLE
+```
+
+---## Checkpoint 24 — Dedicated USB Mode
 
 O LUCAO LINK agora possui uma implementação experimental de modo dedicado via USB, testada em um Motorola Moto G22 com Android 12.
 

@@ -1,6 +1,6 @@
 package com.lucao.link;
 
-
+import android.content.Intent;
 import android.widget.SeekBar;
 import androidx.camera.core.Camera;
 import android.os.Build;
@@ -119,8 +119,9 @@ private android.widget.Switch microphoneSwitch;
                     new ActivityResultContracts.RequestPermission(),
                     permitido -> {
                         if (permitido) {
-                            iniciarCamera();
-                        } else {
+    // CameraX agora pertence ao CameraForegroundService.
+    // iniciarCamera();
+} else {
                             statusText.setText("CAMERA NAO AUTORIZADA");
                             statusText.setTextColor(Color.RED);
                         }
@@ -128,8 +129,23 @@ private android.widget.Switch microphoneSwitch;
             );
 
     @Override
-    protected void onCreate(Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState);
+protected void onCreate(Bundle savedInstanceState) {
+    super.onCreate(savedInstanceState);
+
+    Intent cameraServiceIntent =
+            new Intent(
+                    this,
+                    CameraForegroundService.class
+            );
+
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        startForegroundService(cameraServiceIntent);
+    } else {
+        startService(cameraServiceIntent);
+    }
+
+    // restante do seu onCreate continua aqui...
+
 
         setContentView(R.layout.activity_main);
 cameraExecutor =
@@ -239,14 +255,17 @@ listarFormatosH264();
 
     private void verificarCamera() {
 
-        if (ContextCompat.checkSelfPermission(
+        if (
+        ContextCompat.checkSelfPermission(
                 this,
                 Manifest.permission.CAMERA
-        ) == PackageManager.PERMISSION_GRANTED) {
+        ) == PackageManager.PERMISSION_GRANTED
+) {
 
-            iniciarCamera();
+    // CameraX agora pertence ao CameraForegroundService.
+    // iniciarCamera();
 
-        } else {
+} else {
 
             cameraPermissionLauncher.launch(
                     Manifest.permission.CAMERA
@@ -1328,10 +1347,13 @@ connectionBadge.setTextColor(Color.rgb(167, 139, 250));
                 ) {
 
                     pcConectado = true;
-					conectarVideoTcp();
-					prepararEncoderH264();
 
-                    runOnUiThread(() -> {
+// Pipeline de vídeo agora pertence exclusivamente
+// ao CameraForegroundService.
+// conectarVideoTcp();
+// prepararEncoderH264();
+
+runOnUiThread(() -> {
 
                         statusText.setText(
                                 "PC CONECTADO"
