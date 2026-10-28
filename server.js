@@ -15,9 +15,24 @@ const path = require("path");
 
 const app = express();
 const PORT = 5050;
-const VERSAO = "28";
+const VERSAO = "29";
 
 app.use(express.json({ limit: "64kb" }));
+
+// O app Electron (janela propria) fala com a API por HTTP.
+// CORS liberado apenas para o que roda nesta maquina/LAN.
+app.use((req, res, next) => {
+    res.set("Access-Control-Allow-Origin", "*");
+    res.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    res.set("Access-Control-Allow-Headers", "Content-Type");
+    res.set("Access-Control-Allow-Private-Network", "true");
+
+    if (req.method === "OPTIONS") {
+        return res.sendStatus(204);
+    }
+
+    next();
+});
 
 // ------------------------------------------------------------
 // REDE
@@ -245,6 +260,15 @@ app.post("/api/devices/:id/webcam", (req, res) => {
     res.json({ ok: true });
 });
 
+// Forca o celular a derrubar o socket de video e conectar de
+// novo (util quando o app do PC reinicia com o socket antigo
+// preso no celular).
+app.post("/api/devices/:id/reconectar", (req, res) => {
+    enfileirar(req.params.id, { tipo: "reconectar" });
+
+    res.json({ ok: true });
+});
+
 // Compatibilidade com a rota antiga (teste via curl/powershell).
 app.get("/control/zoom/:value", (req, res) => {
     const valor = Number(req.params.value);
@@ -286,7 +310,19 @@ app.get("/terminal.css", (req, res) => {
     res.sendFile(path.join(__dirname, "pc", "web", "terminal.css"));
 });
 
-app.get("/", (req, res) => res.redirect("/control"));
+// ------------------------------------------------------------
+// APP DE DESKTOP (Electron carrega esta UI)
+// ------------------------------------------------------------
+
+app.use(
+    "/app",
+    express.static(path.join(__dirname, "pc", "app", "ui"), {
+        etag: false,
+        cacheControl: false
+    })
+);
+
+app.get("/", (req, res) => res.redirect("/app/"));
 
 app.get("/control", (req, res) => {
     res.set("Cache-Control", "no-store");
@@ -586,13 +622,31 @@ function painel() {
 // START
 // ------------------------------------------------------------
 
-app.listen(PORT, "0.0.0.0", () => {
-    console.log("");
-    console.log("==============================");
-    console.log("       LUCAO CAM SERVER");
-    console.log("==============================");
-    console.log("");
-    console.log(`Controle : http://${HOST}:${PORT}/control`);
-    console.log(`Video    : tcp ${HOST}:5051`);
-    console.log("");
-});
+function iniciar(porta = PORT) {
+    return new Promise((resolve, reject) => {
+        const servidor = app.listen(porta, "0.0.0.0", () => {
+            console.log("");
+            console.log("==============================");
+            console.log("       LUCAO CAM SERVER");
+            console.log("==============================");
+            console.log("");
+            console.log(`App      : http://localhost:${PORT}/app/`);
+            console.log(`Controle : http://${HOST}:${PORT}/control`);
+            console.log(`Video    : tcp ${HOST}:5051`);
+            console.log("");
+
+            resolve(servidor);
+        });
+
+        servidor.once("error", reject);
+    });
+}
+
+if (require.main === module) {
+    iniciar().catch((erro) => {
+        console.error(`Nao foi possivel abrir a porta ${PORT}: ${erro.message}`);
+        process.exit(1);
+    });
+}
+
+module.exports = { app, iniciar, HOST, PORT, VERSAO };

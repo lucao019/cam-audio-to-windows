@@ -1,0 +1,545 @@
+/* ============================================================
+   LUCAO LINK - app de desktop
+   Layout em cima do terminal.css (mesma linguagem visual).
+   ============================================================ */
+
+:root {
+  --altura-barra: 44px;
+  --altura-rodape: 30px;
+  --largura-lateral: 300px;
+}
+
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+  font-family: "JetBrains Mono", "Cascadia Mono", Consolas, monospace;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+body {
+  background: var(--terminal-bg);
+}
+
+.app {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background:
+    radial-gradient(circle at 50% 0%, rgba(139, 233, 253, 0.04), transparent 55%),
+    var(--terminal-bg);
+}
+
+/* -------------------- TITLEBAR -------------------- */
+
+.barra {
+  height: var(--altura-barra);
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 0 12px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border-color);
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
+.dots {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  padding-right: 6px;
+  -webkit-app-region: no-drag;
+}
+
+.dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.35);
+  padding: 0;
+  cursor: pointer;
+  display: inline-block;
+  outline: none;
+}
+
+.dot:hover {
+  filter: brightness(1.35);
+}
+
+.dot.red { background: #ff5555; }
+.dot.yellow { background: #f1fa8c; }
+.dot.green { background: #50fa7b; }
+
+.barra-titulo {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 0.82rem;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.prompt { color: var(--muted); }
+.comando { color: var(--primary); font-weight: bold; }
+
+.barra-status {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  -webkit-app-region: no-drag;
+}
+
+.barra-status .tag {
+  font-size: 0.62rem;
+  padding: 3px 8px;
+  letter-spacing: 0.08em;
+}
+
+#tagVideo.is-off {
+  border-color: var(--border-color);
+  color: var(--muted);
+}
+
+#tagVideo.is-live {
+  border-color: var(--success);
+  color: var(--success);
+  animation: pulsar 1.8s ease-in-out infinite;
+}
+
+#tagVideo.is-espera {
+  border-color: var(--warning);
+  color: var(--warning);
+}
+
+@keyframes pulsar {
+  50% { opacity: 0.45; }
+}
+
+/* -------------------- CORPO -------------------- */
+
+.corpo {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: var(--largura-lateral) minmax(0, 1fr);
+}
+
+/* ------ SIDEBAR ------ */
+
+.lateral {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border-color);
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.lateral-topo {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-color);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--primary);
+}
+
+.lista {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px;
+}
+
+.item {
+  border: 1px solid var(--border-color);
+  padding: 9px 11px;
+  margin-bottom: 8px;
+  cursor: pointer;
+  position: relative;
+  background: var(--terminal-bg);
+}
+
+.item:hover {
+  border-color: var(--primary);
+}
+
+.item.is-selecionado {
+  border-color: var(--primary);
+  box-shadow: inset 0 0 0 1px var(--primary);
+  background: rgba(139, 233, 253, 0.06);
+}
+
+.item-topo {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.item-nome {
+  font-weight: bold;
+  color: var(--terminal-fg);
+  font-size: 0.86rem;
+  display: block;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.item.is-selecionado .item-nome {
+  color: var(--primary);
+}
+
+.item-transporte {
+  font-size: 0.66rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  flex: 0 0 auto;
+}
+
+.item-linha {
+  margin-top: 6px;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+
+.item-linha b {
+  color: var(--terminal-fg);
+  font-weight: normal;
+}
+
+.bolinha {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  display: inline-block;
+  margin-right: 5px;
+  background: var(--muted);
+  vertical-align: middle;
+}
+
+.bolinha.on { background: var(--success); box-shadow: 0 0 5px var(--success); }
+.bolinha.video { background: var(--primary); box-shadow: 0 0 5px var(--primary); }
+.bolinha.off { background: var(--danger); }
+
+.vazio {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
+  padding: 18px;
+  text-align: center;
+  color: var(--muted);
+}
+
+.vazio-titulo {
+  color: var(--terminal-fg);
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.vazio-sub {
+  font-size: 0.7rem;
+  line-height: 1.6;
+}
+
+.lateral-rodape {
+  flex: 0 0 auto;
+  border-top: 1px solid var(--border-color);
+  padding: 10px 14px;
+  font-size: 0.7rem;
+}
+
+.mini-linha {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 2px 0;
+}
+
+.mini-linha .muted {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.62rem;
+}
+
+.dica {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border-color);
+  color: var(--muted);
+  font-size: 0.66rem;
+  line-height: 1.5;
+}
+
+.dica b { color: var(--primary); }
+
+/* ------ PALCO ------ */
+
+.palco {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 12px;
+  gap: 10px;
+}
+
+.aviso {
+  flex: 0 0 auto;
+  border: 1px solid var(--danger);
+  border-left-width: 4px;
+  color: var(--danger);
+  padding: 8px 12px;
+  font-size: 0.72rem;
+  line-height: 1.5;
+}
+
+.aviso code {
+  color: var(--warning);
+  background: rgba(255, 255, 255, 0.04);
+  padding: 1px 4px;
+}
+
+.video-wrap {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  background: #000;
+  border: 1px solid var(--border-color);
+  overflow: hidden;
+}
+
+.video-wrap::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 3;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0) 0,
+    rgba(0, 0, 0, 0) 2px,
+    rgba(0, 0, 0, 0.12) 3px
+  );
+  opacity: 0.35;
+}
+
+#video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+  z-index: 1;
+}
+
+/* cantos de mira */
+.cantos {
+  position: absolute;
+  inset: 8px;
+  z-index: 4;
+  pointer-events: none;
+}
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  text-align: center;
+  background: rgba(5, 5, 5, 0.82);
+  padding: 24px;
+}
+
+.overlay[hidden] { display: none; }
+
+.overlay-icone {
+  font-size: 2.2rem;
+  color: var(--border-color);
+  line-height: 1;
+}
+
+.overlay-titulo {
+  color: var(--primary);
+  font-weight: bold;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  font-size: 0.92rem;
+  text-shadow: 0 0 6px rgba(139, 233, 253, 0.45);
+}
+
+.overlay-sub {
+  color: var(--muted);
+  font-size: 0.72rem;
+  max-width: 420px;
+  line-height: 1.6;
+}
+
+.overlay.erro .overlay-titulo { color: var(--danger); }
+.overlay.erro .overlay-icone { color: var(--danger); }
+
+.hud,
+.hud-direita {
+  position: absolute;
+  bottom: 8px;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+  background: rgba(0, 0, 0, 0.72);
+  border: 1px solid var(--border-color);
+  color: var(--terminal-fg);
+  font-size: 0.66rem;
+  letter-spacing: 0.05em;
+  pointer-events: none;
+}
+
+.hud { left: 8px; }
+.hud-direita { right: 8px; color: var(--muted); }
+
+.hud .sep { color: var(--border-color); }
+
+/* ------ CONTROLES ------ */
+
+.controles {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto;
+  gap: 18px;
+  align-items: center;
+  border: 1px solid var(--border-color);
+  padding: 10px 14px;
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.linha-zoom {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.rotulo {
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+}
+
+.valor {
+  color: var(--primary);
+  font-weight: bold;
+  font-size: 0.8rem;
+}
+
+#zoom {
+  width: 100%;
+  margin: 7px 0 2px;
+  accent-color: var(--primary);
+  background: transparent;
+  cursor: pointer;
+}
+
+#zoom:disabled {
+  cursor: not-allowed;
+  opacity: 0.35;
+}
+
+.escala {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.62rem;
+  color: var(--muted);
+}
+
+.acoes {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.acoes .button {
+  font-size: 0.72rem;
+  padding: 7px 12px;
+}
+
+.acoes .button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* ------ RODAPE ------ */
+
+.rodape {
+  flex: 0 0 auto;
+  height: var(--altura-rodape);
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 0 12px;
+  border-top: 1px solid var(--border-color);
+  background: var(--surface);
+  font-size: 0.66rem;
+  color: var(--terminal-fg);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.rodape .muted {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.6rem;
+}
+
+.rodape .versao {
+  margin-left: auto;
+  color: var(--muted);
+}
+
+.rodape .ffmpeg.ok { color: var(--success); }
+.rodape .ffmpeg.erro { color: var(--danger); }
+
+/* planilha de fundo quando nao ha video */
+.video-wrap.sem-sinal {
+  background:
+    linear-gradient(rgba(51, 51, 51, 0.12) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(51, 51, 51, 0.12) 1px, transparent 1px),
+    #000;
+  background-size: 40px 40px, 40px 40px, auto;
+}
+
+/* scrollbar */
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: #222;
+  border: 1px solid var(--border-color);
+}
+::-webkit-scrollbar-thumb:hover { background: #333; }
+
+/* sem electron (aberto no navegador): esconde botoes da janela */
+body.sem-electron .dots { visibility: hidden; }

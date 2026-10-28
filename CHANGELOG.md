@@ -1,3 +1,48 @@
+## Checkpoint 29 — App de Desktop (janela única, sem ffplay)
+
+### Adicionado
+
+- App Electron em `pc/app` com janela frameless no estilo terminal (três bolinhas, ciano/verde, monospace).
+- `pc/app/video-bridge.js`: recebe H.264 cru na porta 5051 (handshake `LUCAO/1`), remuxa com ffmpeg (`-c:v copy`) e serve MP4 fragmentado em HTTP na 5052 (`/info/:id`, `/stream/:id`, `/health`).
+- `pc/app/main.js` e `preload.js`: janela, IPC (minimizar/maximizar/fechar/info), detecção de ffmpeg, vigia de vídeo e companion embutido.
+- UI (`pc/app/ui`): player MSE com alinhamento ao vivo, lista de aparelhos, zoom, webcam, reconectar, tela cheia e HUD (codec/resolução/fps/bitrate/buffer).
+- Ícone do app (`pc/app/icone.ico`, 16–256 px) e empacotamento portable com `electron-builder`.
+- Rota `POST /api/devices/:id/reconectar` e comando `reconectar` no Android.
+
+### Alterado
+
+- `server.js` na versão 29: CORS, serve a UI em `/app`, exporta `iniciar()`/`app` sem subir servidor ao ser importado.
+- `companion.js`: `monitorar({ servidores, estado })`, APK resolvido por candidatos (build, `resourcesPath`, `__dirname`), estado em `userData` quando empacotado e `adb reverse` reposto a cada 10 s.
+- App abre com autoplay liberado e seleciona o primeiro aparelho sozinho ("plugar e aparecer").
+
+### Corrigido
+
+- Timestamps errados no fMP4 causados pelo VUI do SPS do celular: `-r 30` antes do `-i` gera 30 fps reais no container.
+- Codec lido do `avcC` (offset +5/+6/+7) e MSE recebendo o MIME completo (`video/mp4; codecs="avc1.64001f"`).
+- Player travado em "CONECTANDO" quando o buffer começava no meio da sessão (ex.: 9 s): agora busca a borda ao vivo.
+- Sessão aberta sem SPS/PPS: após 12 s a UI troca "CONECTANDO" por "SEM FRAMES" com instrução para abrir a câmera/reconectar.
+- Vídeo congelado com socket aberto: a UI pede reconexão após 6 s sem dados.
+- `adb reverse` caía ao replugar o cabo sem o aparelho desconectar: o companion verifica a cada 10 s e repõe os túneis.
+- Câmera do serviço podia fechar sem ninguém religar: watchdog de 3 s sem frames reatribui o CameraX.
+- Escrita de vídeo travada após o PC fechar: watchdog de 5 s derruba o socket e reconecta.
+- Fila de comandos antigos aplicando zoom/webcam fora de hora.
+- Nomes longos de aparelhos na lista agora terminam em reticências em vez de serem cortados no meio.
+- Abrir o app logo após fechá-lo podia não mostrar nada: o travamento de instância única agora espera até 6 s pelo processo anterior terminar (dois cliques seguidos abrem uma janela só).
+
+### Validado
+
+```text
+Device: Motorola Moto G22 (Android 12 / API 31)
+USB: 29.5-30 FPS, 640x480, avc1.64001f, ~2.6 Mbps
+Wi-Fi fallback: túnel USB removido -> reconecta em 192.168.2.121
+Botão reconectar: nova sessão (geração +1) e vídeo volta
+Zoom: slider 1.44x no PC -> Android aplicou 1.441
+Portable: dist/LUCAO-LINK-1.2.0-portable.exe (116 MB) com APK embutido
+Primeiro run do portable: instala o APK, abre o app no celular e o vídeo aparece sozinho
+Fechar e reabrir o app: câmera/vídeo voltam sem tocar no celular
+Túnel removido em execução: companion repõe o adb reverse em até 10 s
+```
+
 ## Checkpoint 25 — Foreground Service + Stable 30 FPS USB
 
 ### Adicionado

@@ -812,3 +812,95 @@ Panel zoom: 0.4 -> 1.54x
 Simultaneous sessions: 3 (1 real + 2 simulated)
 ```
 
+## Checkpoint 29 — Desktop App (one window, no ffplay)
+
+The PC side is now a real Windows app: open it, plug the phone (USB) or
+let it connect over Wi-Fi, and the camera appears inside the window.
+
+### Architecture
+
+```text
+Android app (camera -> H.264 Annex B)
+   |  handshake: LUCAO/1 <id> <name> <usb|wifi>\n
+   v
+video-bridge.js tcp :5051   -> one ffmpeg per device (-c:v copy)
+   |  fMP4 (frag_keyframe + empty_moov)
+   v
+http :5052 /info/:id, /stream/:id
+   |  MSE
+   v
+Electron window -> http://127.0.0.1:5050/app/
+   ^
+server.js :5050 (API + panel + same UI in a browser)
+```
+
+### Running
+
+```text
+npm install
+npm start          # electron .
+```
+
+Requirements:
+
+```text
+- Node.js 20+
+- ffmpeg in PATH (or FFMPEG_PATH); without it the app warns and keeps the socket open
+- adb in PATH for USB (adb reverse 5050/5051)
+```
+
+### Window
+
+- Frameless terminal look, custom titlebar with the three dots.
+- Device list on the left, video on the right, zoom/webcam/reconnect/fullscreen
+  controls below.
+- The video starts by itself (MSE autoplay policy is relaxed for the app).
+- `F12` / `Ctrl+Shift+I` opens DevTools.
+
+### Reconnection layers
+
+```text
+Android: 5s without writing video -> drop socket and reconnect
+Android: 3s without camera frames   -> rebind CameraX (max every 10s)
+Android: "reconectar" command       -> drop socket on demand
+PC:      vigiarVideo every 4s       -> asks /reconectar when the session is
+                                       missing or has no codec for 15s
+PC:      companion every 10s        -> restores adb reverse if the tunnel drops
+UI:      no data for 6s             -> asks /reconectar without killing the player
+UI:      buffer starting mid-session -> seeks to the live edge
+```
+
+### Packaging
+
+```text
+npm run dist       # electron-builder --win portable
+```
+
+The portable exe is written to `dist/` with the APK bundled as a resource
+(`extraResources`), so a fresh machine only needs adb + ffmpeg installed.
+
+### Notes
+
+- The Android SPS from CameraX carries a broken VUI (~1.200.000 fps). The
+  bridge passes `-r 30` before `-i` so the fMP4 gets 30 fps timestamps
+  without re-encoding.
+- The codec is read from the `avcC` box (profile/compat/level) and the MSE
+  gets the full MIME (`video/mp4; codecs="avc1.64001f"`).
+- Bridge ports are fixed: 5050 control/UI, 5051 H.264, 5052 fMP4.
+
+### Validated
+
+```text
+Device: Motorola Moto G22 (Android 12 / API 31)
+USB: 29.5-30 FPS, avc1.64001f, 640x480, ~2.6 Mbps
+Wi-Fi fallback: USB tunnel removed -> reconnects at 192.168.2.121
+Reconnect button: new session (generation +1) and playback resumes
+Zoom: PC slider 1.44x -> Android applied 1.441
+Portable: dist/LUCAO-LINK-1.2.0-portable.exe (116 MB), APK bundled
+First run of the portable: installs the bundled APK, opens the Android app
+and the video appears on its own
+Close and reopen the app: the camera comes back without touching the phone
+Tunnel removed while running: companion restores adb reverse within 10s
+UI without codec for 12s: shows "SEM FRAMES" instead of "CONECTANDO"
+```
+

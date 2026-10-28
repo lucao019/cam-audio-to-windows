@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LUCAO LINK</title>
+<link rel="stylesheet" href="/terminal.css">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div class="app">
+
+  <!-- ================= TITLEBAR ================= -->
+  <header class="barra" id="barra">
+    <div class="dots">
+      <button class="dot red" id="btnFechar" title="fechar"></button>
+      <button class="dot yellow" id="btnMinimizar" title="minimizar"></button>
+      <button class="dot green" id="btnMaximizar" title="maximizar"></button>
+    </div>
+
+    <div class="barra-titulo">
+      <span class="prompt">lucao@windows:~$</span>
+      <span class="comando">lucao-link</span>
+      <span class="cursor">█</span>
+    </div>
+
+    <div class="barra-status">
+      <span class="tag is-success" id="tagVideo">video off</span>
+      <span class="tag" id="tagDevices">0 devices</span>
+    </div>
+  </header>
+
+  <!-- ================= CORPO ================= -->
+  <main class="corpo">
+
+    <!-- ------ SIDEBAR ------ -->
+    <aside class="lateral">
+      <div class="lateral-topo">
+        <span>▸ aparelhos</span>
+        <span class="muted" id="contagem">0</span>
+      </div>
+
+      <div class="lista" id="lista"></div>
+
+      <div class="vazio" id="vazio">
+        <div class="vazio-titulo">aguardando android<span class="cursor">█</span></div>
+        <div class="vazio-sub" id="vazioSub">
+          conecte por usb (depuração ativa) ou abra o app no celular
+        </div>
+      </div>
+
+      <div class="lateral-rodape">
+        <div class="mini-linha">
+          <span class="muted">pc</span>
+          <span id="pcHost">--</span>
+        </div>
+        <div class="mini-linha">
+          <span class="muted">usb</span>
+          <span>adb reverse 5050/5051</span>
+        </div>
+        <div class="mini-linha">
+          <span class="muted">wifi</span>
+          <span>porta 5050</span>
+        </div>
+        <div class="dica" id="dica">
+          no celular: campo <b>pc host</b> = IP acima
+        </div>
+      </div>
+    </aside>
+
+    <!-- ------ PALCO ------ -->
+    <section class="palco">
+
+      <div class="aviso" id="avisoFfmpeg" hidden>
+        <b>ffmpeg não encontrado.</b>
+        instale com <code>winget install Gyan.FFmpeg</code> ou defina
+        <code>FFMPEG_PATH</code> e abra o app de novo.
+      </div>
+
+      <div class="video-wrap" id="videoWrap">
+        <video id="video" muted autoplay playsinline></video>
+
+        <div class="overlay" id="overlay">
+          <div class="overlay-icone">▚</div>
+          <div class="overlay-titulo" id="overlayTitulo">SEM SINAL</div>
+          <div class="overlay-sub" id="overlaySub">
+            conecte o android por usb ou wi-fi
+          </div>
+        </div>
+
+        <div class="hud" id="hud" hidden>
+          <span id="hudNome">--</span>
+          <span class="sep">·</span>
+          <span id="hudFps">-- fps</span>
+          <span class="sep">·</span>
+          <span id="hudKbps">--</span>
+          <span class="sep">·</span>
+          <span id="hudBuf">buf --</span>
+        </div>
+
+        <div class="hud-direita" id="hudDireita" hidden>
+          <span id="hudRes">--</span>
+          <span class="sep">·</span>
+          <span id="hudCodec">--</span>
+        </div>
+      </div>
+
+      <!-- ------ CONTROLES ------ -->
+      <div class="controles">
+        <div class="controle-zoom">
+          <div class="linha-zoom">
+            <span class="rotulo">zoom</span>
+            <span class="valor" id="zoomValor">1.0x</span>
+          </div>
+          <input type="range" id="zoom" min="0" max="1" step="0.01" value="0" disabled>
+          <div class="escala">
+            <span id="zoomMin">1.0x</span>
+            <span id="zoomMax">1.0x</span>
+          </div>
+        </div>
+
+        <div class="acoes">
+          <button class="button" id="btnWebcam" disabled>webcam: --</button>
+          <button class="button" id="btnReconectar" disabled>reconectar</button>
+          <button class="button" id="btnTela" disabled>tela cheia</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ================= RODAPE ================= -->
+  <footer class="rodape">
+    <span><span class="muted">servidor</span> <b id="rodapeHost">--</b></span>
+    <span><span class="muted">video</span> <b id="rodapeVideo">tcp 5051</b></span>
+    <span><span class="muted">stream</span> <b id="rodapeStream">5052</b></span>
+    <span class="ffmpeg" id="rodapeFfmpeg">ffmpeg ...</span>
+    <span class="versao" id="rodapeVersao">checkpoint 29</span>
+  </footer>
+
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

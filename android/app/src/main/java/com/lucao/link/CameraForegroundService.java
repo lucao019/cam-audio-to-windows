@@ -168,6 +168,9 @@ public class CameraForegroundService extends Service
     private volatile boolean cameraAtiva = true;
     private volatile boolean solicitarKeyframeH264 = false;
     private volatile boolean servicoAtivo = true;
+    private volatile long ultimaEscritaVideo = 0;
+    private volatile long ultimoFrameCamera = 0;
+    private volatile long ultimoReinicioCamera = 0;
     private final java.util.concurrent.atomic.AtomicBoolean reconectandoVideo =
         new java.util.concurrent.atomic.AtomicBoolean(false);
 
@@ -540,6 +543,9 @@ private void iniciarReconexaoVideo() {
                 transporteAtivo =
                         USB_HOST.equals(host) ? "usb" : "wifi";
 
+                ultimaEscritaVideo =
+                        System.currentTimeMillis();
+
                 Log.i(
                         "LUCAO_TCP",
                         "VIDEO TCP CONECTADO: " +
@@ -868,6 +874,55 @@ private void iniciarReconexaoVideo() {
                     continue;
                 }
 
+                // Watchdog da camera: o CameraX pode perder a sessao
+                // (ex.: Activity destruida, surface invalida) e parar
+                // de entregar frames sem avisar. Sem frames por 3s,
+                // religa a camera (no maximo a cada 10s).
+                long agora = System.currentTimeMillis();
+
+                if (
+                        cameraAtiva &&
+                        servicoAtivo &&
+                        ultimoFrameCamera > 0 &&
+                        agora - ultimoFrameCamera > 3000 &&
+                        agora - ultimoReinicioCamera > 10000
+                ) {
+
+                    ultimoReinicioCamera = agora;
+                    ultimoFrameCamera = agora;
+                    solicitarKeyframeH264 = true;
+
+                    Log.w(
+                            "LUCAO_CAMERA",
+                            "SEM FRAMES HA 3s - REINICIANDO CAMERA"
+                    );
+
+                    ContextCompat
+                            .getMainExecutor(this)
+                            .execute(this::iniciarCamera);
+                }
+
+                // Watchdog: se o PC sumiu, a escrita no socket pode
+                // ficar bloqueada para sempre. Sem progresso por 5s,
+                // derruba e reconecta (o write travado e liberado).
+                if (
+                        cameraAtiva &&
+                        videoOutput != null &&
+                        ultimaEscritaVideo > 0 &&
+                        System.currentTimeMillis() -
+                                ultimaEscritaVideo > 5000
+                ) {
+
+                    Log.w(
+                            "LUCAO_TCP",
+                            "SEM ESCRITA DE VIDEO HA 5s - RECONECTANDO"
+                    );
+
+                    desconectarVideoTcp();
+                    iniciarReconexaoVideo();
+                    continue;
+                }
+
                 try {
                     enviarStatus();
                 } catch (Exception e) {
@@ -1010,6 +1065,9 @@ private void iniciarCamera() {
             "ENTROU EM iniciarCamera()"
     );
 
+    // Referencia para o watchdog de frames.
+    ultimoFrameCamera = System.currentTimeMillis();
+
     ListenableFuture<ProcessCameraProvider> cameraProviderFuture =
             ProcessCameraProvider.getInstance(this);
 
@@ -1146,6 +1204,8 @@ Log.i(
         private void analisarFrame(ImageProxy image) {
 
     try {
+
+        ultimoFrameCamera = System.currentTimeMillis();
 
         if (!pcConectado) {
             return;
@@ -1557,6 +1617,9 @@ Log.i(
             try {
 
                 output.write(h264);
+
+                ultimaEscritaVideo =
+                        System.currentTimeMillis();
 
             } catch (IOException e) {
 
@@ -2126,6 +2189,16 @@ public IBinder onBind(
                 definirWebcamAtiva(
                         comando.optBoolean("ligada", true)
                 );
+
+            } else if ("reconectar".equals(tipo)) {
+
+                Log.i(
+                        "LUCAO_CONTROL",
+                        "RECONEXAO DE VIDEO PEDIDA PELO PC"
+                );
+
+                desconectarVideoTcp();
+                iniciarReconexaoVideo();
             }
 
         } catch (Exception e) {
@@ -2147,6 +2220,10 @@ public IBinder onBind(
 
         if (ativo) {
             solicitarKeyframeH264 = true;
+
+            if (videoOutput == null) {
+                iniciarReconexaoVideo();
+            }
         } else {
             // Sem frames, as estatisticas antigas ficariam
             // congeladas no painel.

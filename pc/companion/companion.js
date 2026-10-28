@@ -15,17 +15,35 @@ const path = require("path");
 // ============================================================
 
 const RAIZ = path.resolve(__dirname, "..", "..");
-const APK = path.join(
-    RAIZ,
-    "android",
-    "app",
-    "build",
-    "outputs",
-    "apk",
-    "debug",
-    "app-debug.apk"
-);
-const ESTADO = path.join(__dirname, ".state.json");
+
+// Em desenvolvimento o APK vem do build do Gradle; no app
+// empacotado ele e copiado para a pasta de recursos.
+const APK_CANDIDATOS = [
+    path.join(
+        RAIZ,
+        "android",
+        "app",
+        "build",
+        "outputs",
+        "apk",
+        "debug",
+        "app-debug.apk"
+    ),
+    path.join(process.resourcesPath || "", "app-debug.apk"),
+    path.join(__dirname, "app-debug.apk")
+];
+
+function caminhoApk() {
+    for (const candidato of APK_CANDIDATOS) {
+        if (candidato && fs.existsSync(candidato)) {
+            return candidato;
+        }
+    }
+
+    return APK_CANDIDATOS[0];
+}
+
+let ESTADO = path.join(__dirname, ".state.json");
 const PACOTE = "com.lucao.link";
 
 const INTERVALO_MS = 2000;
@@ -130,7 +148,7 @@ function salvarEstado() {
 
 function assinaturaApk() {
     try {
-        const info = fs.statSync(APK);
+        const info = fs.statSync(caminhoApk());
 
         return {
             apkMtime: Math.round(info.mtimeMs),
@@ -275,7 +293,7 @@ async function instalarApk(serial) {
 
     try {
         await executarADB(
-            ["-s", serial, "install", "-r", APK],
+            ["-s", serial, "install", "-r", caminhoApk()],
             { timeout: 240000 }
         );
 
@@ -302,7 +320,7 @@ async function instalarApk(serial) {
 
             try {
                 await executarADB(
-                    ["-s", serial, "install", "-r", APK],
+                    ["-s", serial, "install", "-r", caminhoApk()],
                     { timeout: 240000 }
                 );
 
@@ -326,7 +344,8 @@ async function garantirApp(serial) {
     if (!assinatura) {
         console.error(
             "APK nao encontrado. Compile antes:\n" +
-                "  cd android && gradlew.bat :app:assembleDebug"
+                "  cd android && gradlew.bat :app:assembleDebug\n" +
+                `  (procurei em ${caminhoApk()})`
         );
         return;
     }
@@ -364,10 +383,7 @@ async function garantirApp(serial) {
     }
 }
 
-async function configurarAparelho(serial) {
-    const host = ipLocal();
-
-    // 1. tuneis USB
+async function garantirReverse(serial) {
     try {
         await executarADB([
             "-s",
@@ -394,6 +410,30 @@ async function configurarAparelho(serial) {
         "tcp:5051",
         "tcp:5051"
     ]);
+}
+
+async function reverseAtivo(serial) {
+    try {
+        const saida = await executarADB([
+            "-s",
+            serial,
+            "reverse",
+            "--list"
+        ]);
+
+        return (
+            saida.includes("tcp:5050") && saida.includes("tcp:5051")
+        );
+    } catch (erro) {
+        return false;
+    }
+}
+
+async function configurarAparelho(serial) {
+    const host = ipLocal();
+
+    // 1. tuneis USB
+    await garantirReverse(serial);
 
     // 2. APK
     await garantirApp(serial);
@@ -439,7 +479,15 @@ async function configurarAparelho(serial) {
 // MONITOR
 // ------------------------------------------------------------
 
-async function monitorar() {
+async function monitorar(opcoes = {}) {
+    const gerirServidores = opcoes.servidores !== false;
+
+    // No app empacotado o __dirname fica dentro do asar (somente
+    // leitura), entao o estado vai para a pasta do usuario.
+    if (opcoes.estado) {
+        ESTADO = opcoes.estado;
+    }
+
     console.log("");
     console.log("==============================");
     console.log("     LUCAO LINK COMPANION");
@@ -452,7 +500,7 @@ async function monitorar() {
 
     if (assinatura) {
         console.log(
-            `APK: ${APK}\n` +
+            `APK: ${caminhoApk()}\n` +
                 `     ${assinatura.apkTamanho} bytes\n`
         );
     }
@@ -462,10 +510,18 @@ async function monitorar() {
     const avisados = new Set();
     let ultimaContagem = -1;
 
+    // serial -> ultima verificacao dos tuneis adb reverse
+    const ultimaVerificacao = new Map();
+
+    let ultimoErro = "";
+    let ultimoErroEm = 0;
+
     while (true) {
         try {
-            await garantirServidorHTTP();
-            await garantirReceiverVideo();
+            if (gerirServidores) {
+                await garantirServidorHTTP();
+                await garantirReceiverVideo();
+            }
 
             const dispositivos = await listarDispositivos();
             const seriais = new Set(
@@ -486,6 +542,27 @@ async function monitorar() {
 
             for (const { serial } of dispositivos) {
                 if (configurados.get(serial) === chave) {
+                    // Tuneis adb reverse podem cair (replugar o
+                    // cabo) sem o aparelho desconectar. Repoe.
+                    const agora = Date.now();
+                    const ultima = ultimaVerificacao.get(serial) || 0;
+
+                    if (agora - ultima > 10000) {
+                        ultimaVerificacao.set(serial, agora);
+
+                        if (!(await reverseAtivo(serial))) {
+                            try {
+                                await garantirReverse(serial);
+
+                                console.log(
+                                    `[${serial}] Tuneis USB restaurados.`
+                                );
+                            } catch (erro) {
+                                // Proximo ciclo tenta de novo.
+                            }
+                        }
+                    }
+
                     continue;
                 }
 
@@ -517,14 +594,28 @@ async function monitorar() {
             }
 
         } catch (erro) {
-            console.error(
-                "Erro durante monitoramento:",
-                erro.message
-            );
+            const agora = Date.now();
+
+            if (
+                erro.message !== ultimoErro ||
+                agora - ultimoErroEm > 30000
+            ) {
+                console.error(
+                    "Erro durante monitoramento:",
+                    erro.message
+                );
+
+                ultimoErro = erro.message;
+                ultimoErroEm = agora;
+            }
         }
 
         await dormir(INTERVALO_MS);
     }
 }
 
-monitorar();
+if (require.main === module) {
+    monitorar();
+}
+
+module.exports = { monitorar };

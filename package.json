@@ -1,5 +1,58 @@
 {
+  "name": "lucao-link",
+  "productName": "LUCAO LINK",
+  "version": "1.2.0",
+  "private": true,
+  "description": "Camera do Android no Windows - USB ou Wi-Fi, com video embutido no app",
+  "author": "lucao",
+  "license": "MIT",
+  "main": "pc/app/main.js",
+  "scripts": {
+    "start": "electron .",
+    "app": "electron .",
+    "server": "node server.js",
+    "receiver": "node pc/live-receiver.js",
+    "dist": "electron-builder --win portable"
+  },
   "dependencies": {
     "express": "^5.2.1"
+  },
+  "devDependencies": {
+    "electron": "^45.1.0",
+    "electron-builder": "^26.18.0"
+  },
+  "build": {
+    "appId": "com.lucao.link.desktop",
+    "productName": "LUCAO LINK",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "package.json",
+      "server.js",
+      "pc/app/**/*",
+      "pc/web/**/*",
+      "pc/companion/companion.js"
+    ],
+    "extraResources": [
+      {
+        "from": "android/app/build/outputs/apk/debug/app-debug.apk",
+        "to": "app-debug.apk"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "pc/app/icone.ico"
+    },
+    "portable": {
+      "artifactName": "LUCAO-LINK-${version}-portable.${ext}"
+    }
   }
 }

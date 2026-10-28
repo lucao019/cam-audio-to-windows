@@ -24,6 +24,12 @@ yarn-debug.log*
 yarn-error.log*
 
 # --------------------
+# APP DESKTOP (BUILD)
+# --------------------
+dist/
+release/
+
+# --------------------
 # ANDROID / GRADLE
 # --------------------
 .gradle/
