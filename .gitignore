@@ -81,3 +81,8 @@ Desktop.ini
 # --------------------
 temp/
 tmp/
+
+# --------------------
+# ESTADO LOCAL DO COMPANION
+# --------------------
+pc/companion/.state.json

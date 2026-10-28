@@ -14,6 +14,7 @@ import android.os.Bundle;
 import android.util.Log;
 import android.util.SizeF;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.SeekBar;
 import android.widget.TextView;
 
@@ -26,6 +27,8 @@ import androidx.core.content.ContextCompat;
 import java.io.IOException;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 
 /**
@@ -36,9 +39,6 @@ import java.util.Locale;
 public class MainActivity extends AppCompatActivity {
 
     private static final String TAG = "LUCAO_UI";
-
-    private static final String SERVER =
-            "http://127.0.0.1:5050/";
 
     private TextView statusText;
     private TextView connectionBadge;
@@ -53,6 +53,13 @@ public class MainActivity extends AppCompatActivity {
     private TextView zoomMaxText;
 
     private android.widget.CheckBox webcamSwitch;
+
+    private EditText pcHostInput;
+
+    private boolean sincronizandoWebcam = false;
+
+    private static final String PREFS = "lucao_link";
+    private static final String PREF_PC_HOST = "pcHost";
 
     // ============================================================
     // STATUS VINDO DO SERVICO (conexao TCP + zoom real)
@@ -98,6 +105,21 @@ public class MainActivity extends AppCompatActivity {
                                         R.color.term_danger
                                 )
                         );
+                    }
+
+                    // Sincroniza o checkbox quando o comando veio
+                    // do painel do PC.
+                    if (intent.hasExtra("webcam") && webcamSwitch != null) {
+
+                        boolean ligada =
+                                intent.getBooleanExtra("webcam", true);
+
+                        if (webcamSwitch.isChecked() != ligada) {
+
+                            sincronizandoWebcam = true;
+                            webcamSwitch.setChecked(ligada);
+                            sincronizandoWebcam = false;
+                        }
                     }
 
                     if (intent.hasExtra("zoom")) {
@@ -238,6 +260,10 @@ protected void onCreate(Bundle savedInstanceState) {
 
         webcamSwitch = findViewById(R.id.webcamSwitch);
 
+        pcHostInput = findViewById(R.id.pcHostInput);
+
+        configurarHostPc();
+
         detectarCamerasDisponiveis();
 
         // ----------------------------
@@ -292,6 +318,10 @@ protected void onCreate(Bundle savedInstanceState) {
 
         webcamSwitch.setOnCheckedChangeListener(
                 (buttonView, isChecked) -> {
+
+                    if (sincronizandoWebcam) {
+                        return;
+                    }
 
                     Bundle extras = new Bundle();
 
@@ -589,12 +619,98 @@ if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
     // CONEXAO HTTP DE CONTROLE (5050)
     // ============================================================
 
+    private void configurarHostPc() {
+
+        android.content.SharedPreferences prefs =
+                getSharedPreferences(PREFS, MODE_PRIVATE);
+
+        String host = getIntent() != null
+                ? getIntent().getStringExtra("pcHost")
+                : null;
+
+        if (host == null || host.trim().isEmpty()) {
+            host = prefs.getString(PREF_PC_HOST, "");
+        }
+
+        if (host == null) {
+            host = "";
+        }
+
+        host = host.trim();
+
+        pcHostInput.setText(host);
+
+        if (!host.isEmpty()) {
+
+            prefs.edit()
+                    .putString(PREF_PC_HOST, host)
+                    .apply();
+
+            enviarHostAoServico(host);
+        }
+
+        pcHostInput.setOnEditorActionListener(
+                (v, actionId, event) -> {
+
+                    salvarHostPc();
+
+                    return true;
+                }
+        );
+
+        pcHostInput.setOnFocusChangeListener(
+                (v, temFoco) -> {
+
+                    if (!temFoco) {
+                        salvarHostPc();
+                    }
+                }
+        );
+    }
+
+    private void salvarHostPc() {
+
+        String host =
+                pcHostInput.getText().toString().trim();
+
+        getSharedPreferences(PREFS, MODE_PRIVATE)
+                .edit()
+                .putString(PREF_PC_HOST, host)
+                .apply();
+
+        enviarHostAoServico(host);
+
+        statusText.setText(
+                host.isEmpty()
+                        ? "host automatico"
+                        : "host " + host
+        );
+
+        statusText.setTextColor(
+                ContextCompat.getColor(
+                        this,
+                        host.isEmpty()
+                                ? R.color.term_muted
+                                : R.color.term_primary
+                )
+        );
+    }
+
+    private void enviarHostAoServico(String host) {
+
+        Bundle extras = new Bundle();
+
+        extras.putString("host", host);
+
+        enviarAcaoServico(
+                CameraForegroundService.ACTION_SET_HOST,
+                extras
+        );
+    }
+
     private void testarConexao() {
 
-        Log.i(
-        TAG,
-        "BOTAO CONECTAR - servidor=" + SERVER
-);
+        Log.i(TAG, "BOTAO CONECTAR");
 
         statusText.setText("conectando...");
         statusText.setTextColor(
@@ -608,79 +724,89 @@ if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
 
         new Thread(() -> {
 
-            HttpURLConnection connection = null;
+            String wifi = getSharedPreferences(PREFS, MODE_PRIVATE)
+                    .getString(PREF_PC_HOST, "");
 
-            try {
+            List<String> hosts = new ArrayList<>();
 
-                URL url =
-                        new URL(SERVER);
+            // USB (ADB reverse) tem prioridade.
+            hosts.add("127.0.0.1");
 
-                connection =
-                        (HttpURLConnection) url.openConnection();
+            if (wifi != null && !wifi.trim().isEmpty()) {
 
-                connection.setRequestMethod("GET");
-                connection.setConnectTimeout(3000);
-                connection.setReadTimeout(3000);
+                wifi = wifi.trim();
 
-                int response =
-                        connection.getResponseCode();
-
-                        Log.i(
-        TAG,
-        "HTTP RESPONSE=" + response
-);
-
-
-                if (
-                        response >= 200 &&
-                        response < 300
-                ) {
-
-                    runOnUiThread(() -> {
-
-                        statusText.setText(
-                                "online"
-                        );
-
-                        statusText.setTextColor(
-                                ContextCompat.getColor(
-                                        MainActivity.this,
-                                        R.color.term_success
-                                )
-                        );
-
-                        connectButton.setText(
-                                "conectado"
-                        );
-
-                        connectButton.setEnabled(true);
-                    });
-
-                } else {
-
-                    mostrarErro(
-                            "ERRO HTTP " + response
-                    );
-                }
-
-            } catch (IOException e) {
-
-    Log.e(
-            TAG,
-            "ERRO NA CONEXAO HTTP",
-            e
-    );
-
-    mostrarErro(
-            "pc offline"
-    );
-
-            } finally {
-
-                if (connection != null) {
-                    connection.disconnect();
+                if (!hosts.contains(wifi)) {
+                    hosts.add(wifi);
                 }
             }
+
+            for (String host : hosts) {
+
+                HttpURLConnection conexao = null;
+
+                try {
+
+                    URL url = new URL(
+                            "http://" + host + ":5050/api/devices"
+                    );
+
+                    conexao = (HttpURLConnection) url.openConnection();
+
+                    conexao.setRequestMethod("GET");
+                    conexao.setConnectTimeout(2000);
+                    conexao.setReadTimeout(2000);
+
+                    int response = conexao.getResponseCode();
+
+                    Log.i(
+                            TAG,
+                            "HTTP " + host + " -> " + response
+                    );
+
+                    if (response >= 200 && response < 300) {
+
+                        String transporte =
+                                "127.0.0.1".equals(host)
+                                        ? "usb"
+                                        : "wifi";
+
+                        runOnUiThread(() -> {
+
+                            statusText.setText(
+                                    "online · " + transporte
+                            );
+
+                            statusText.setTextColor(
+                                    ContextCompat.getColor(
+                                            MainActivity.this,
+                                            R.color.term_success
+                                    )
+                            );
+
+                            connectButton.setText("conectado");
+                            connectButton.setEnabled(true);
+                        });
+
+                        return;
+                    }
+
+                } catch (IOException e) {
+
+                    Log.w(
+                            TAG,
+                            "FALHA EM " + host + ": " + e.getMessage()
+                    );
+
+                } finally {
+
+                    if (conexao != null) {
+                        conexao.disconnect();
+                    }
+                }
+            }
+
+            mostrarErro("pc offline");
 
         }).start();
     }

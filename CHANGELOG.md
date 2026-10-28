@@ -562,3 +562,70 @@ Transport: USB / ADB Reverse
 Zoom command sent from the PC (`/control/zoom/0.5`) was applied to the
 running camera (linear zoom 0.5 -> 1.8x) and reflected on the Android
 interface without restarting the stream.
+
+---
+
+## Checkpoint 28 - Multi-Device Sync (USB + Wi-Fi)
+
+### Added
+
+- Persistent device identity (UUID + model name) stored in
+  SharedPreferences.
+- Video handshake sent before the H.264 stream:
+
+  ```text
+  LUCAO/1 <deviceId> <deviceName> <usb|wifi>\n
+  ```
+
+  The receiver uses it to map each ffplay window to a device.
+  Clients from previous checkpoints (raw H.264) still work.
+- Windows control panel at `http://<pc>:5050/control`, built with the
+  real `terminal.css` (copied to `pc/web/terminal.css`).
+- Multiple simultaneous devices: one session and one ffplay window per
+  device (`-window_title`). Reconnecting the same device replaces only
+  its own session.
+- Android -> Windows state sync: `POST /api/status` about once per
+  second (device, transport, IP, zoom, zoom range, webcam, FPS, kbps).
+- Windows -> Android commands per device: `GET /api/poll?id=<device>`,
+  `POST /api/devices/:id/zoom`, `POST /api/devices/:id/webcam`.
+- Wi-Fi fallback: the service tries USB first (`127.0.0.1` via
+  `adb reverse`) and then the saved `pcHost`. The Android UI has a
+  `pc host` field and the companion pushes the LAN IP when opening the
+  app.
+- `pc/companion/companion.js` now:
+  - installs/updates the APK when the local build changes
+    (mtime + size recorded in `pc/companion/.state.json`);
+  - configures `adb reverse` per serial;
+  - handles several devices at once;
+  - starts `server.js` and `pc/live-receiver.js` when needed;
+  - retries the install after waking the device when MIUI blocks it.
+
+### Fixed
+
+- Handshake detection failed when the first TCP packet carried the
+  handshake plus more than 4 KB of video; the size limit now runs after
+  protocol detection.
+- Receiver re-announces active sessions every 3 seconds, so the panel
+  recovers after a `server.js` restart.
+- Panel webcam button kept losing its `webcam` class on every refresh.
+- FPS/bitrate now drop to zero when the webcam is turned off instead of
+  showing the last value forever.
+- Zoom values shown by the slider use the real CameraX linear mapping
+  (`1 / (1 - linear * (1 - 1 / max))`).
+
+### Validated
+
+```text
+Device: Motorola Moto G22 (hawaiip_g)
+Android: 12 / API 31
+Video: 640x480 @ ~30 FPS
+USB: 127.0.0.1:5050 + 127.0.0.1:5051 (adb reverse)
+Wi-Fi: 192.168.2.121:5050 + 192.168.2.121:5051
+```
+
+- Panel zoom `0.4` -> `1.54x` on the running camera over Wi-Fi.
+- WEBCAM OFF -> `fps 0` / `kbps 0`; WEBCAM ON -> ~29.6 FPS.
+- Three simultaneous sessions (one real device + two simulated
+  clients), each with its own ffplay window.
+- Companion installed the new build automatically and restored the USB
+  pipeline without manual commands.

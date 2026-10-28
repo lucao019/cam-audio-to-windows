@@ -3,8 +3,15 @@ package com.lucao.link;
 import org.json.JSONObject;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
+import java.net.Inet4Address;
+import java.net.InetAddress;
+import java.net.NetworkInterface;
 import java.net.URL;
+import java.util.ArrayList;
+import java.util.Enumeration;
+import java.util.List;
 import java.util.Scanner;
+import java.util.UUID;
 
 import android.app.Notification;
 import android.app.NotificationChannel;
@@ -76,8 +83,31 @@ public class CameraForegroundService extends Service
 
     // Host 127.0.0.1 = modo dedicado USB via ADB Reverse
     // (companion.js monta os tuneis tcp:5050 e tcp:5051).
-    private static final String VIDEO_HOST = "127.0.0.1";
+    //
+    // Se o USB nao estiver ativo, o servico tenta o host Wi-Fi
+    // salvo (pcHost), preenchido pela MainActivity/companion.
+    private static final String USB_HOST = "127.0.0.1";
     private static final int VIDEO_PORT = 5051;
+    private static final int CONTROL_PORT = 5050;
+
+    // ============================================================
+    // IDENTIDADE / PREFERENCIAS
+    // ============================================================
+
+    private static final String PREFS = "lucao_link";
+    private static final String PREF_DEVICE_ID = "deviceId";
+    private static final String PREF_DEVICE_NAME = "deviceName";
+    private static final String PREF_PC_HOST = "pcHost";
+
+    private volatile String deviceId = "";
+    private volatile String deviceName = "android";
+    private volatile String pcHost = "";
+
+    private volatile String hostAtivo = USB_HOST;
+    private volatile String transporteAtivo = "usb";
+
+    private volatile double fpsAtual = 0;
+    private volatile double kbpsAtual = 0;
 
     // ============================================================
     // ACOES DE CONTROLE (recebidas da MainActivity)
@@ -91,6 +121,8 @@ public class CameraForegroundService extends Service
             "com.lucao.link.ACTION_START_CAMERA";
     public static final String ACTION_REQUEST_STATUS =
             "com.lucao.link.ACTION_REQUEST_STATUS";
+    public static final String ACTION_SET_HOST =
+            "com.lucao.link.ACTION_SET_HOST";
 
     // Broadcast de status enviado de volta para a UI
     public static final String ACTION_STATUS =
@@ -158,13 +190,15 @@ public void onCreate() {
 
     Log.i("LUCAO_SERVICE", "CameraForegroundService.onCreate()");
 
+    carregarIdentidade();
+
 listarFpsCamera();
 
 cameraExecutor =
         Executors.newSingleThreadExecutor();
 
     networkExecutor =
-        Executors.newFixedThreadPool(2);
+        Executors.newFixedThreadPool(4);
 
 videoWriterExecutor =
         Executors.newSingleThreadExecutor();
@@ -235,6 +269,7 @@ networkExecutor.execute(() -> {
 
     prepararEncoderH264();
     iniciarPollingControle();
+    iniciarEnvioStatus();
 
     Log.i(
             "LUCAO_SERVICE",
@@ -300,6 +335,8 @@ networkExecutor.execute(() -> {
     videoOutput = null;
     videoSocket = null;
     pcConectado = false;
+    fpsAtual = 0;
+    kbpsAtual = 0;
 
     if (output != null) {
         try {
@@ -473,43 +510,375 @@ private void iniciarReconexaoVideo() {
             return;
         }
 
+        for (String host : candidatosHost()) {
+
+            Socket socket = null;
+
+            try {
+
+                socket = new Socket();
+                socket.connect(
+                        new java.net.InetSocketAddress(host, VIDEO_PORT),
+                        1500
+                );
+                socket.setTcpNoDelay(true);
+
+                OutputStream output =
+                        socket.getOutputStream();
+
+                // Handshake: identifica o aparelho para o receiver
+                // (uma janela ffplay por device).
+                output.write(
+                        montarHandshake(host).getBytes("UTF-8")
+                );
+                output.flush();
+
+                videoSocket = socket;
+                videoOutput = output;
+
+                hostAtivo = host;
+                transporteAtivo =
+                        USB_HOST.equals(host) ? "usb" : "wifi";
+
+                Log.i(
+                        "LUCAO_TCP",
+                        "VIDEO TCP CONECTADO: " +
+                                host +
+                                ":" +
+                                VIDEO_PORT +
+                                " (" +
+                                transporteAtivo +
+                                ")"
+                );
+
+                broadcastStatus();
+
+                return;
+
+            } catch (Exception e) {
+
+                Log.w(
+                        "LUCAO_TCP",
+                        "FALHA AO CONECTAR " +
+                                host +
+                                ":5051: " +
+                                e.getMessage()
+                );
+
+                if (socket != null) {
+                    try {
+                        socket.close();
+                    } catch (Exception ignored) {
+                    }
+                }
+
+                videoSocket = null;
+                videoOutput = null;
+            }
+        }
+    }
+
+    // ------------------------------------------------------------
+    // IDENTIDADE / HOSTS
+    // ------------------------------------------------------------
+
+    private void carregarIdentidade() {
+
+        android.content.SharedPreferences prefs =
+                getSharedPreferences(PREFS, MODE_PRIVATE);
+
+        deviceId = prefs.getString(PREF_DEVICE_ID, "");
+
+        if (deviceId == null || deviceId.isEmpty()) {
+
+            deviceId = UUID.randomUUID().toString();
+
+            prefs.edit()
+                    .putString(PREF_DEVICE_ID, deviceId)
+                    .apply();
+        }
+
+        deviceName = prefs.getString(PREF_DEVICE_NAME, "");
+
+        if (deviceName == null || deviceName.isEmpty()) {
+
+            deviceName = Build.MODEL;
+
+            prefs.edit()
+                    .putString(PREF_DEVICE_NAME, deviceName)
+                    .apply();
+        }
+
+        pcHost = prefs.getString(PREF_PC_HOST, "");
+
+        if (pcHost == null) {
+            pcHost = "";
+        }
+    }
+
+    /**
+     * Nome sem espacos: o handshake e separado por espacos.
+     */
+    private String nomeHandshake() {
+
+        String nome = deviceName == null ? "android" : deviceName;
+
+        nome = nome.replaceAll("[\\s/]+", "_");
+
+        return nome.isEmpty() ? "android" : nome;
+    }
+
+    private String montarHandshake(String host) {
+
+        String transporte =
+                USB_HOST.equals(host) ? "usb" : "wifi";
+
+        return "LUCAO/1 " +
+                deviceId +
+                " " +
+                nomeHandshake() +
+                " " +
+                transporte +
+                "\n";
+    }
+
+    /**
+     * USB (127.0.0.1 via ADB reverse) tem prioridade; depois o
+     * host Wi-Fi informado pela MainActivity/companion.
+     */
+    private List<String> candidatosHost() {
+
+        List<String> lista = new ArrayList<>();
+
+        lista.add(USB_HOST);
+
+        String wifi = pcHost == null ? "" : pcHost.trim();
+
+        if (!wifi.isEmpty() && !lista.contains(wifi)) {
+            lista.add(wifi);
+        }
+
+        return lista;
+    }
+
+    private String ipLocal() {
+
         try {
 
-            Socket socket =
-                    new Socket(
-                            VIDEO_HOST,
-                            VIDEO_PORT
-                    );
+            Enumeration<NetworkInterface> interfaces =
+                    NetworkInterface.getNetworkInterfaces();
 
-            socket.setTcpNoDelay(true);
+            String primeiro = "";
 
-            OutputStream output =
-                    socket.getOutputStream();
+            while (interfaces.hasMoreElements()) {
 
-            videoSocket = socket;
-            videoOutput = output;
+                NetworkInterface ni = interfaces.nextElement();
 
-            Log.i(
-                    "LUCAO_TCP",
-                    "VIDEO TCP CONECTADO: " +
-                            VIDEO_HOST +
-                            ":" +
-                            VIDEO_PORT
+                if (!ni.isUp() || ni.isLoopback()) {
+                    continue;
+                }
+
+                Enumeration<InetAddress> enderecos =
+                        ni.getInetAddresses();
+
+                while (enderecos.hasMoreElements()) {
+
+                    InetAddress endereco = enderecos.nextElement();
+
+                    if (
+                            !(endereco instanceof Inet4Address) ||
+                            endereco.isLoopbackAddress()
+                    ) {
+                        continue;
+                    }
+
+                    String ip = endereco.getHostAddress();
+
+                    // Prefere a interface Wi-Fi (o PC so alcanca
+                    // esse IP; dados moveis nao servem).
+                    String nome = ni.getName().toLowerCase();
+
+                    if (
+                            nome.startsWith("wlan") ||
+                            nome.startsWith("wifi") ||
+                            nome.startsWith("ap")
+                    ) {
+                        return ip;
+                    }
+
+                    if (primeiro.isEmpty()) {
+                        primeiro = ip;
+                    }
+                }
+            }
+
+            return primeiro;
+
+        } catch (Exception ignored) {
+        }
+
+        return "";
+    }
+
+    // ------------------------------------------------------------
+    // HTTP DE CONTROLE
+    // ------------------------------------------------------------
+
+    private String requisicaoHttp(
+            String metodo,
+            String host,
+            String caminho,
+            String corpo
+    ) throws Exception {
+
+        URL url = new URL(
+                "http://" + host + ":" + CONTROL_PORT + caminho
+        );
+
+        HttpURLConnection conn =
+                (HttpURLConnection) url.openConnection();
+
+        conn.setRequestMethod(metodo);
+        conn.setConnectTimeout(800);
+        conn.setReadTimeout(1200);
+
+        if (corpo != null) {
+
+            conn.setDoOutput(true);
+            conn.setRequestProperty(
+                    "Content-Type",
+                    "application/json"
             );
 
-            broadcastStatus();
+            OutputStream out = conn.getOutputStream();
+            out.write(corpo.getBytes("UTF-8"));
+            out.flush();
+            out.close();
+        }
+
+        int codigo = conn.getResponseCode();
+
+        InputStream in = codigo >= 200 && codigo < 300
+                ? conn.getInputStream()
+                : conn.getErrorStream();
+
+        String resposta = "";
+
+        if (in != null) {
+
+            Scanner scanner =
+                    new Scanner(in, "UTF-8").useDelimiter("\\A");
+
+            resposta = scanner.hasNext()
+                    ? scanner.next()
+                    : "";
+
+            in.close();
+        }
+
+        conn.disconnect();
+
+        if (codigo < 200 || codigo >= 300) {
+            throw new IOException("HTTP " + codigo);
+        }
+
+        return resposta;
+    }
+
+    /**
+     * Envia o estado atual para o painel do PC (~1x por segundo).
+     */
+    private void enviarStatus() {
+
+        JSONObject json = new JSONObject();
+
+        try {
+
+            json.put("id", deviceId);
+            json.put("nome", deviceName);
+            json.put("transporte", transporteAtivo);
+            json.put("ip", ipLocal());
+            json.put("webcam", cameraAtiva);
+            json.put("fps", fpsAtual);
+            json.put("kbps", kbpsAtual);
+
+            Camera camera = cameraAtual;
+
+            if (camera != null) {
+
+                androidx.camera.core.ZoomState zoomState =
+                        camera
+                                .getCameraInfo()
+                                .getZoomState()
+                                .getValue();
+
+                if (zoomState != null) {
+
+                    json.put("zoom", zoomState.getZoomRatio());
+                    json.put("zoomMin", zoomState.getMinZoomRatio());
+                    json.put("zoomMax", zoomState.getMaxZoomRatio());
+                }
+            }
 
         } catch (Exception e) {
 
-            Log.e(
-                    "LUCAO_TCP",
-                    "ERRO AO CONECTAR VIDEO TCP",
-                    e
+            Log.w(
+                    "LUCAO_CONTROL",
+                    "FALHA AO MONTAR STATUS: " + e.getMessage()
             );
 
-            videoSocket = null;
-            videoOutput = null;
+            return;
         }
+
+        for (String host : candidatosHost()) {
+
+            try {
+
+                requisicaoHttp(
+                        "POST",
+                        host,
+                        "/api/status",
+                        json.toString()
+                );
+
+                return;
+
+            } catch (Exception ignored) {
+            }
+        }
+    }
+
+    private void iniciarEnvioStatus() {
+
+        networkExecutor.execute(() -> {
+
+            while (servicoAtivo) {
+
+                try {
+
+                    Thread.sleep(1000);
+
+                } catch (InterruptedException e) {
+
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+
+                if (!pcConectado) {
+                    continue;
+                }
+
+                try {
+                    enviarStatus();
+                } catch (Exception e) {
+
+                    Log.w(
+                            "LUCAO_CONTROL",
+                            "STATUS FALHOU: " + e.getMessage()
+                    );
+                }
+            }
+        });
     }
 
     // ============================================================
@@ -527,6 +896,9 @@ private void iniciarReconexaoVideo() {
     intent.setPackage(getPackageName());
 
     intent.putExtra("conectado", pcConectado);
+    intent.putExtra("webcam", cameraAtiva);
+    intent.putExtra("transporte", transporteAtivo);
+    intent.putExtra("host", hostAtivo);
 
     Camera camera = cameraAtual;
 
@@ -1340,6 +1712,12 @@ Log.i(
                         1000.0 /
                         intervalo;
 
+                // Usado pelo painel do PC (/api/status).
+                fpsAtual = fpsSaida;
+
+                kbpsAtual =
+                        h264BytesSaida * 8.0 / intervalo;
+
                 Log.i(
                         "LUCAO_H264",
                         String.format(
@@ -1590,18 +1968,35 @@ public int onStartCommand(
                             true
                     );
 
-            cameraAtiva = ativo;
+            definirWebcamAtiva(ativo);
 
-            // Reativou a webcam: pede um keyframe novo
-            // para o stream voltar limpo.
-            if (ativo) {
-                solicitarKeyframeH264 = true;
+        } else if (ACTION_SET_HOST.equals(action)) {
+
+            String host =
+                    intent.getStringExtra("host");
+
+            if (host != null) {
+
+                host = host.trim();
+
+                pcHost = host;
+
+                getSharedPreferences(PREFS, MODE_PRIVATE)
+                        .edit()
+                        .putString(PREF_PC_HOST, host)
+                        .apply();
+
+                Log.i(
+                        "LUCAO_CONTROL",
+                        "PC HOST DEFINIDO: " + host
+                );
+
+                // Sem USB, a proxima tentativa de reconexao
+                // ja usa o novo host.
+                if (videoOutput == null) {
+                    iniciarReconexaoVideo();
+                }
             }
-
-            Log.i(
-                    "LUCAO_CONTROL",
-                    "WEBCAM " + (ativo ? "ON" : "OFF")
-            );
 
         } else if (ACTION_START_CAMERA.equals(action)) {
 
@@ -1637,49 +2032,47 @@ public IBinder onBind(
     // ============================================================
 
     private void iniciarPollingControle() {
-        // Usa o mesmo executor de rede para rodar em background
+
         networkExecutor.execute(() -> {
-            Log.i("LUCAO_CONTROL", "Iniciando polling de controle em 127.0.0.1:5050");
+
+            Log.i(
+                    "LUCAO_CONTROL",
+                    "Iniciando polling de controle (" +
+                            deviceId +
+                            ")"
+            );
 
             int falhasPolling = 0;
 
             while (servicoAtivo) {
+
                 try {
-                    Thread.sleep(150); // Consulta o servidor a cada 150ms
 
-                    // Se o USB nÃ£o estiver roteado ou o PC offline, evita poluir o log
-                    if (!pcConectado) continue;
+                    Thread.sleep(150);
 
-                    URL url = new URL("http://127.0.0.1:5050/control/poll");
-                    HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-                    conn.setRequestMethod("GET");
-                    conn.setConnectTimeout(1000);
-                    conn.setReadTimeout(1000);
-
-                    if (conn.getResponseCode() == 200) {
-                        InputStream in = new java.io.BufferedInputStream(conn.getInputStream());
-                        Scanner scanner = new Scanner(in).useDelimiter("\\A");
-                        String response = scanner.hasNext() ? scanner.next() : "";
-                        in.close();
-
-                        if (response.contains("\"command\":\"zoom\"")) {
-                            JSONObject json = new JSONObject(response);
-                            if (json.has("value")) {
-                                float zoomValue = (float) json.getDouble("value");
-                                aplicarZoomCamera(zoomValue);
-                            }
-                        }
+                    // Sem video conectado nao ha painel esperando
+                    // comandos deste aparelho.
+                    if (!pcConectado) {
+                        continue;
                     }
-                    conn.disconnect();
+
+                    String resposta = requisicaoHttp(
+                            "GET",
+                            hostAtivo,
+                            "/api/poll?id=" + deviceId,
+                            null
+                    );
 
                     falhasPolling = 0;
 
+                    aplicarComandoRemoto(resposta);
+
                 } catch (Exception e) {
-                    // Polling continua sempre; loga periodicamente
-                    // para nao silenciar falhas reais.
+
                     falhasPolling++;
 
                     if (falhasPolling % 100 == 1) {
+
                         Log.w(
                                 "LUCAO_CONTROL",
                                 "POLLING FALHOU (" +
@@ -1688,9 +2081,86 @@ public IBinder onBind(
                                         e.getMessage()
                         );
                     }
+
+                    try {
+                        Thread.sleep(300);
+                    } catch (InterruptedException ignored) {
+                    }
                 }
             }
         });
+    }
+
+    private void aplicarComandoRemoto(String resposta) {
+
+        if (resposta == null || resposta.isEmpty()) {
+            return;
+        }
+
+        try {
+
+            JSONObject json = new JSONObject(resposta);
+
+            if (json.isNull("comando")) {
+                return;
+            }
+
+            JSONObject comando = json.optJSONObject("comando");
+
+            if (comando == null) {
+                return;
+            }
+
+            String tipo = comando.optString("tipo", "");
+
+            if ("zoom".equals(tipo)) {
+
+                float zoom = (float) comando.optDouble("valor", 0.0);
+
+                aplicarZoomCamera(
+                        Math.max(0.0f, Math.min(1.0f, zoom))
+                );
+
+            } else if ("webcam".equals(tipo)) {
+
+                definirWebcamAtiva(
+                        comando.optBoolean("ligada", true)
+                );
+            }
+
+        } catch (Exception e) {
+
+            Log.w(
+                    "LUCAO_CONTROL",
+                    "COMANDO INVALIDO: " + e.getMessage()
+            );
+        }
+    }
+
+    private void definirWebcamAtiva(boolean ativo) {
+
+        if (cameraAtiva == ativo) {
+            return;
+        }
+
+        cameraAtiva = ativo;
+
+        if (ativo) {
+            solicitarKeyframeH264 = true;
+        } else {
+            // Sem frames, as estatisticas antigas ficariam
+            // congeladas no painel.
+            fpsAtual = 0;
+            kbpsAtual = 0;
+        }
+
+        Log.i(
+                "LUCAO_CONTROL",
+                "WEBCAM " + (ativo ? "ON" : "OFF")
+        );
+
+        // Mantem o checkbox da MainActivity em sincronia.
+        broadcastStatus();
     }
 
     private void aplicarZoomCamera(float zoom) {

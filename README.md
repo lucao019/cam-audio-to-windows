@@ -402,10 +402,12 @@ Virtual Webcam
 [x] Automatic network reconnection
 [x] PC camera zoom control (HTTP)
 [x] Terminal-style interface
+[x] Multi-device (USB + Wi-Fi)
+[x] Windows control panel (terminal.css)
 [ ] Microphone capture
 [ ] Microphone sensitivity / gain
 [ ] Audio transport
-[ ] Windows camera control interface
+[x] Windows camera control interface
 [ ] Windows microphone control interface
 [ ] Virtual webcam
 [ ] Virtual microphone
@@ -748,3 +750,65 @@ Android: 13 / API 33
 Video: 640x480 @ ~30 FPS with live preview
 Zoom: PC 0.5 linear -> 1.8x on the running camera
 ```
+
+---
+
+## Checkpoint 28 — Multi-Device Sync (USB + Wi-Fi)
+
+Several phones can now send video to the same Windows machine while the
+panel controls each one independently.
+
+### Architecture
+
+```text
+Android app (camera -> H.264)
+   |  handshake: LUCAO/1 <id> <name> <usb|wifi>\n
+   v
+pc/live-receiver.js :5051  ->  one ffplay per device
+   |  POST /api/video
+   v
+server.js :5050  ->  panel http://<pc>:5050/control
+   ^  GET /api/poll?id=<id>  (commands)
+   |  POST /api/status       (state)
+Android app
+```
+
+### Running
+
+```text
+cd pc/companion
+node companion.js
+```
+
+The companion starts `server.js` and `live-receiver.js`, configures
+`adb reverse` for every connected device, installs/updates the APK when
+the local build changes, and opens the app with the LAN IP already
+filled in (`--es pcHost <ip>`).
+
+### Panel
+
+Open `http://localhost:5050/control` (or `http://<lan-ip>:5050/control`
+from another machine). Each card shows transport, video state, FPS,
+bitrate and offers the zoom slider and the WEBCAM button.
+
+### Connection priority
+
+```text
+1. USB / adb reverse -> 127.0.0.1:5050 + 127.0.0.1:5051
+2. Wi-Fi             -> <pcHost>:5050 + <pcHost>:5051
+```
+
+If USB is not routed, the app automatically falls back to the saved
+`pc host` (the field is editable in the app).
+
+### Validated
+
+```text
+Device: Motorola Moto G22
+Android: 12 / API 31
+USB: 29.6-30 FPS
+Wi-Fi: 29.6 FPS (PC 192.168.2.121, phone 192.168.2.158)
+Panel zoom: 0.4 -> 1.54x
+Simultaneous sessions: 3 (1 real + 2 simulated)
+```
+
