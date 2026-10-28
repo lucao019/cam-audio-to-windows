@@ -1,137 +1,209 @@
 package com.lucao.link;
 
+import android.Manifest;
+import android.content.BroadcastReceiver;
+import android.content.Context;
 import android.content.Intent;
-import android.widget.SeekBar;
-import androidx.camera.core.Camera;
-import android.os.Build;
+import android.content.IntentFilter;
+import android.content.pm.PackageManager;
+import android.graphics.Color;
 import android.hardware.camera2.CameraCharacteristics;
 import android.hardware.camera2.CameraManager;
-import android.util.SizeF;
-import java.net.Socket;
-import java.io.OutputStream;
-import android.util.Range;
-import androidx.camera.core.resolutionselector.AspectRatioStrategy;
-import androidx.camera.core.resolutionselector.ResolutionSelector;
-import androidx.camera.core.resolutionselector.ResolutionStrategy;
-
-import android.Manifest;
-import android.content.pm.PackageManager;
-import android.graphics.Bitmap;
-import android.graphics.Color;
-import android.graphics.ImageFormat;
-import android.graphics.Matrix;
-import android.graphics.Rect;
-import android.graphics.YuvImage;
+import android.os.Build;
 import android.os.Bundle;
+import android.util.Log;
+import android.util.SizeF;
 import android.widget.Button;
+import android.widget.SeekBar;
 import android.widget.TextView;
 
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AppCompatActivity;
-import androidx.camera.core.CameraSelector;
-import androidx.camera.core.ImageAnalysis;
-import androidx.camera.core.ImageProxy;
-import androidx.camera.core.Preview;
-import androidx.camera.lifecycle.ProcessCameraProvider;
 import androidx.camera.view.PreviewView;
 import androidx.core.content.ContextCompat;
-import androidx.camera.video.Quality;
-import androidx.camera.video.QualitySelector;
-import androidx.camera.video.Recorder;
-import androidx.camera.video.VideoCapture;
 
-import com.google.common.util.concurrent.ListenableFuture;
-
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
-import java.nio.ByteBuffer;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.Locale;
 
-import android.media.MediaCodecInfo;
-import android.media.MediaCodecList;
-import android.media.MediaFormat;
-import android.util.Log;
-
-import android.media.MediaCodec;
-import android.view.Surface;
-
-
+/**
+ * Apenas UI.
+ * O pipeline de video (camera -> H264 -> TCP) pertence
+ * exclusivamente ao CameraForegroundService.
+ */
 public class MainActivity extends AppCompatActivity {
 
-	private boolean primeiroFrameH264Enviado = false;
-
-	private volatile MediaCodec h264Encoder;
-    private long h264JanelaInicioMs = 0;
-private int h264FramesEntrada = 0;
-private int h264FramesSaida = 0;
-private long h264BytesSaida = 0;
-    private Surface h264InputSurface;
-	private VideoCapture<Recorder> videoCapture;
-
-    private static final int VIDEO_WIDTH = 640;
-private static final int VIDEO_HEIGHT = 480;
-private static final int VIDEO_FPS = 30;
-private static final int VIDEO_BITRATE = 2_000_000;
-
-private static final String VIDEO_HOST = "127.0.0.1";
-private static final int VIDEO_PORT = 5051;
-
-private volatile Socket videoSocket;
-private volatile OutputStream videoOutput;
-
-    private TextView statusText;
-private TextView connectionBadge;
-
-private Button connectButton;
-
-private PreviewView cameraPreview;
-private Camera cameraAtual;
-
-private SeekBar zoomSeekBar;
-private TextView zoomValueText;
-private TextView zoomMinText;
-private TextView zoomMaxText;
-
-private android.widget.Switch webcamSwitch;
-private android.widget.Switch microphoneSwitch;
-
-    private ExecutorService cameraExecutor;
-    private ExecutorService networkExecutor;
-
-    private volatile boolean pcConectado = false;
-    private volatile boolean cameraAtiva = true;
-    private volatile boolean solicitarKeyframeH264 = false;
-    private long ultimoEnvio = 0;
+    private static final String TAG = "LUCAO_UI";
 
     private static final String SERVER =
             "http://127.0.0.1:5050/";
 
-    private static final String FRAME_URL =
-            "http://127.0.0.1:5050/frame";
+    private TextView statusText;
+    private TextView connectionBadge;
+
+    private Button connectButton;
+
+    private PreviewView cameraPreview;
+
+    private SeekBar zoomSeekBar;
+    private TextView zoomValueText;
+    private TextView zoomMinText;
+    private TextView zoomMaxText;
+
+    private android.widget.CheckBox webcamSwitch;
+
+    // ============================================================
+    // STATUS VINDO DO SERVICO (conexao TCP + zoom real)
+    // ============================================================
+
+    private final BroadcastReceiver statusReceiver =
+            new BroadcastReceiver() {
+
+                @Override
+                public void onReceive(
+                        Context context,
+                        Intent intent
+                ) {
+
+                    boolean conectado =
+                            intent.getBooleanExtra(
+                                    "conectado",
+                                    false
+                            );
+
+                    if (conectado) {
+
+                        connectionBadge.setText(
+                                "● STREAM ATIVO"
+                        );
+
+                        connectionBadge.setTextColor(
+                                ContextCompat.getColor(
+                                        context,
+                                        R.color.term_success
+                                )
+                        );
+
+                    } else {
+
+                        connectionBadge.setText(
+                                "● SEM STREAM"
+                        );
+
+                        connectionBadge.setTextColor(
+                                ContextCompat.getColor(
+                                        context,
+                                        R.color.term_danger
+                                )
+                        );
+                    }
+
+                    if (intent.hasExtra("zoom")) {
+
+                        float zoom =
+                                intent.getFloatExtra(
+                                        "zoom",
+                                        1.0f
+                                );
+
+                        float minimo =
+                                intent.getFloatExtra(
+                                        "zoomMin",
+                                        1.0f
+                                );
+
+                        float maximo =
+                                intent.getFloatExtra(
+                                        "zoomMax",
+                                        1.0f
+                                );
+
+                        float linear =
+                                intent.getFloatExtra(
+                                        "linearZoom",
+                                        0.0f
+                                );
+
+                        zoomValueText.setText(
+                                String.format(
+                                        Locale.US,
+                                        "%.1fx",
+                                        zoom
+                                )
+                        );
+
+                        zoomMinText.setText(
+                                String.format(
+                                        Locale.US,
+                                        "%.1fx",
+                                        minimo
+                                )
+                        );
+
+                        zoomMaxText.setText(
+                                String.format(
+                                        Locale.US,
+                                        "%.1fx",
+                                        maximo
+                                )
+                        );
+
+                        // fromUser=false, entao nao gera
+                        // eco de comando de volta ao servico.
+                        zoomSeekBar.setProgress(
+                                Math.round(
+                                        linear * 100
+                                )
+                        );
+                    }
+                }
+            };
+
+    // ============================================================
+    // PERMISSAO DE CAMERA
+    // ============================================================
 
     private final ActivityResultLauncher<String> cameraPermissionLauncher =
             registerForActivityResult(
                     new ActivityResultContracts.RequestPermission(),
                     permitido -> {
+
                         if (permitido) {
-    // CameraX agora pertence ao CameraForegroundService.
-    // iniciarCamera();
-} else {
-                            statusText.setText("CAMERA NAO AUTORIZADA");
-                            statusText.setTextColor(Color.RED);
+
+                            // Permissao garantida:
+                            // pede ao servico para iniciar a camera.
+                            enviarAcaoServico(
+                                    CameraForegroundService
+                                            .ACTION_START_CAMERA
+                            );
+
+                        } else {
+
+                            statusText.setText(
+                                    "CAMERA NAO AUTORIZADA"
+                            );
+
+                            statusText.setTextColor(
+                                    ContextCompat.getColor(
+                                            MainActivity.this,
+                                            R.color.term_danger
+                                    )
+                            );
                         }
                     }
             );
+
+    // ============================================================
+    // LIFECYCLE
+    // ============================================================
 
     @Override
 protected void onCreate(Bundle savedInstanceState) {
     super.onCreate(savedInstanceState);
 
+    // CameraX pertence ao CameraForegroundService.
     Intent cameraServiceIntent =
             new Intent(
                     this,
@@ -144,134 +216,241 @@ protected void onCreate(Bundle savedInstanceState) {
         startService(cameraServiceIntent);
     }
 
-    // restante do seu onCreate continua aqui...
-
-
         setContentView(R.layout.activity_main);
-cameraExecutor =
-        java.util.concurrent.Executors
-                .newSingleThreadExecutor();
-                networkExecutor =
-        new java.util.concurrent.ThreadPoolExecutor(
-                1,
-                1,
-                0L,
-                java.util.concurrent.TimeUnit.MILLISECONDS,
-                new java.util.concurrent.ArrayBlockingQueue<>(2),
-                new java.util.concurrent.ThreadPoolExecutor.CallerRunsPolicy()
+
+        statusText = findViewById(R.id.statusText);
+        connectionBadge = findViewById(R.id.connectionBadge);
+
+        connectButton = findViewById(R.id.connectButton);
+
+        cameraPreview = findViewById(R.id.cameraPreview);
+
+        // O pipeline pertence ao servico; a Activity so entrega
+        // a superficie do PreviewView para o CameraX desenhar.
+        CameraForegroundService.setPreviewProvider(
+                cameraPreview.getSurfaceProvider()
         );
+
+        zoomSeekBar = findViewById(R.id.zoomSeekBar);
+        zoomValueText = findViewById(R.id.zoomValueText);
+        zoomMinText = findViewById(R.id.zoomMinText);
+        zoomMaxText = findViewById(R.id.zoomMaxText);
+
+        webcamSwitch = findViewById(R.id.webcamSwitch);
 
         detectarCamerasDisponiveis();
 
-        cameraPreview = findViewById(R.id.cameraPreview);
-webcamSwitch = findViewById(R.id.webcamSwitch);
+        // ----------------------------
+        // ZOOM (UI -> servico)
+        // ----------------------------
 
+        zoomSeekBar.setOnSeekBarChangeListener(
+                new SeekBar.OnSeekBarChangeListener() {
 
+                    @Override
+                    public void onProgressChanged(
+                            SeekBar seekBar,
+                            int progress,
+                            boolean fromUser
+                    ) {
 
-        java.util.concurrent.Executors
-                .newSingleThreadExecutor();
+                        if (!fromUser) {
+                            return;
+                        }
 
+                        Bundle extras = new Bundle();
 
-                zoomSeekBar = findViewById(R.id.zoomSeekBar);
-zoomValueText = findViewById(R.id.zoomValueText);
-zoomMinText = findViewById(R.id.zoomMinText);
-zoomMaxText = findViewById(R.id.zoomMaxText);
+                        extras.putFloat(
+                                "zoom",
+                                progress / 100.0f
+                        );
 
-                zoomSeekBar.setOnSeekBarChangeListener(
-        new SeekBar.OnSeekBarChangeListener() {
+                        enviarAcaoServico(
+                                CameraForegroundService
+                                        .ACTION_SET_ZOOM,
+                                extras
+                        );
+                    }
 
-            @Override
-            public void onProgressChanged(
-                    SeekBar seekBar,
-                    int progress,
-                    boolean fromUser
-            ) {
+                    @Override
+                    public void onStartTrackingTouch(
+                            SeekBar seekBar
+                    ) {
+                    }
 
-                if (!fromUser || cameraAtual == null) {
-                    return;
+                    @Override
+                    public void onStopTrackingTouch(
+                            SeekBar seekBar
+                    ) {
+                    }
                 }
+        );
 
-                float linearZoom =
-                        progress / 100.0f;
+        // ----------------------------
+        // WEBCAM ON/OFF (UI -> servico)
+        // ----------------------------
 
-                cameraAtual
-                        .getCameraControl()
-                        .setLinearZoom(linearZoom);
-            }
+        webcamSwitch.setOnCheckedChangeListener(
+                (buttonView, isChecked) -> {
 
-            @Override
-            public void onStartTrackingTouch(
-                    SeekBar seekBar
-            ) {
-            }
+                    Bundle extras = new Bundle();
 
-            @Override
-            public void onStopTrackingTouch(
-                    SeekBar seekBar
-            ) {
-            }
-        }
-);
-        statusText = findViewById(R.id.statusText);
-connectionBadge = findViewById(R.id.connectionBadge);
+                    extras.putBoolean(
+                            "ativo",
+                            isChecked
+                    );
 
-connectButton = findViewById(R.id.connectButton);
+                    enviarAcaoServico(
+                            CameraForegroundService
+                                    .ACTION_SET_CAMERA_ACTIVE,
+                            extras
+                    );
 
-cameraPreview = findViewById(R.id.cameraPreview);
+                    Log.i(
+                            TAG,
+                            "WEBCAM " +
+                                    (isChecked ? "ON" : "OFF")
+                    );
+                }
+        );
 
-webcamSwitch = findViewById(R.id.webcamSwitch);
-microphoneSwitch = findViewById(R.id.microphoneSwitch);
-cameraAtiva = webcamSwitch.isChecked();
+        // ----------------------------
+        // STATUS (servico -> UI)
+        // ----------------------------
 
-webcamSwitch.setOnCheckedChangeListener(
-        (buttonView, isChecked) -> {
+        registrarStatusReceiver();
 
-            cameraAtiva = isChecked;
+        enviarAcaoServico(
+                CameraForegroundService
+                        .ACTION_REQUEST_STATUS
+        );
 
-            if (isChecked) {
-    solicitarKeyframeH264 = true;
-}
+        // ----------------------------
+        // CONEXAO HTTP DE CONTROLE
+        // ----------------------------
 
-            Log.i(
-                    "LUCAO_UI",
-                    "WEBCAM " + (isChecked ? "ON" : "OFF")
-            );
-        }
-);
+        connectButton.setOnClickListener(
+                v -> testarConexao()
+        );
 
-connectButton.setOnClickListener(
-        v -> testarConexao()
-);
-
-connectButton.postDelayed(
-        this::testarConexao,
-        1000
-);
+        connectButton.postDelayed(
+                this::testarConexao,
+                1000
+        );
 
         verificarCamera();
-listarEncodersH264();
-listarFormatosH264();
+    }
+
+    @Override
+    protected void onDestroy() {
+
+        super.onDestroy();
+
+        // Evita manter uma SurfaceProvider invalida dentro do servico.
+        CameraForegroundService.setPreviewProvider(null);
+
+        try {
+            unregisterReceiver(statusReceiver);
+        } catch (Exception ignored) {
+        }
+    }
+
+    // ============================================================
+    // SERVICO
+    // ============================================================
+
+    private void enviarAcaoServico(String action) {
+        enviarAcaoServico(action, null);
+    }
+
+    private void enviarAcaoServico(
+            String action,
+            Bundle extras
+    ) {
+
+        try {
+
+            Intent intent =
+                    new Intent(
+                            this,
+                            CameraForegroundService.class
+                    );
+
+            intent.setAction(action);
+
+            if (extras != null) {
+                intent.putExtras(extras);
+            }
+
+            startService(intent);
+
+        } catch (Exception e) {
+
+            Log.e(
+                    TAG,
+                    "ERRO AO ENVIAR ACAO AO SERVICO: " +
+                            action,
+                    e
+            );
+        }
+    }
+
+    private void registrarStatusReceiver() {
+
+        IntentFilter filter =
+                new IntentFilter(
+                        CameraForegroundService.ACTION_STATUS
+                );
+
+        if (
+                Build.VERSION.SDK_INT >=
+                        Build.VERSION_CODES.TIRAMISU
+        ) {
+
+            registerReceiver(
+                    statusReceiver,
+                    filter,
+                    Context.RECEIVER_NOT_EXPORTED
+            );
+
+        } else {
+
+            registerReceiver(
+                    statusReceiver,
+                    filter
+            );
+        }
     }
 
     private void verificarCamera() {
 
         if (
-        ContextCompat.checkSelfPermission(
-                this,
-                Manifest.permission.CAMERA
-        ) == PackageManager.PERMISSION_GRANTED
-) {
+                ContextCompat.checkSelfPermission(
+                        this,
+                        Manifest.permission.CAMERA
+                ) == PackageManager.PERMISSION_GRANTED
+        ) {
 
-    // CameraX agora pertence ao CameraForegroundService.
-    // iniciarCamera();
+            // Ja autorizada: garante que a camera do
+            // servico realmente iniciou (em instalacao
+            // nova o servico pode ter tentado antes da
+            // permissao ser concedida).
+            enviarAcaoServico(
+                    CameraForegroundService
+                            .ACTION_START_CAMERA
+            );
 
-} else {
+        } else {
 
             cameraPermissionLauncher.launch(
                     Manifest.permission.CAMERA
             );
         }
     }
+
+    // ============================================================
+    // DETECAO DE CAMERAS (diagnostico)
+    // ============================================================
 
 private void detectarCamerasDisponiveis() {
 
@@ -406,913 +585,24 @@ if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
     }
 }
 
-    private void iniciarCamera() {
-
-    ListenableFuture<ProcessCameraProvider> cameraProviderFuture =
-            ProcessCameraProvider.getInstance(this);
-
-    cameraProviderFuture.addListener(() -> {
-
-        try {
-
-            ProcessCameraProvider cameraProvider =
-                    cameraProviderFuture.get();
-
-            // Preview da câmera na tela do celular
-            Preview preview =
-        new Preview.Builder()
-                .setTargetFrameRate(
-                        new Range<>(
-                                VIDEO_FPS,
-                                VIDEO_FPS
-                        )
-                )
-                .build();
-
-            preview.setSurfaceProvider(
-                    cameraPreview.getSurfaceProvider()
-            );
-
-            // Preferência de resolução: 640x480 (4:3)
-            ResolutionSelector resolutionSelector =
-                    new ResolutionSelector.Builder()
-                            .setAspectRatioStrategy(
-                                    AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY
-                            )
-                            .setResolutionStrategy(
-                                    new ResolutionStrategy(
-                                            new android.util.Size(
-                                                    VIDEO_WIDTH,
-                                                    VIDEO_HEIGHT
-                                            ),
-                                            ResolutionStrategy.FALLBACK_RULE_CLOSEST_LOWER_THEN_HIGHER
-                                    )
-                            )
-                            .build();
-
-            // Frames que serão processados pelo LUCAO LINK
-            ImageAnalysis imageAnalysis =
-                    new ImageAnalysis.Builder()
-                            .setResolutionSelector(
-                                    resolutionSelector
-                            )
-                            .setBackpressureStrategy(
-                                    ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST
-                            )
-                            .build();
-
-            imageAnalysis.setAnalyzer(
-                    cameraExecutor,
-                    this::analisarFrame
-            );
-
-            // Câmera traseira
-            CameraSelector cameraSelector =
-                    CameraSelector.DEFAULT_BACK_CAMERA;
-
-            // Remove configurações anteriores
-            cameraProvider.unbindAll();
-
-            // Preview + análise.
-            // NÃO usamos VideoCapture aqui.
-            cameraAtual =
-        cameraProvider.bindToLifecycle(
-                this,
-                cameraSelector,
-                preview,
-                imageAnalysis
-        );
-
-        cameraAtual
-        .getCameraInfo()
-        .getZoomState()
-        .observe(
-                this,
-                zoomState -> {
-
-                    if (zoomState == null) {
-                        return;
-                    }
-
-                    float atual =
-                            zoomState.getZoomRatio();
-
-                    float minimo =
-                            zoomState.getMinZoomRatio();
-
-                    float maximo =
-                            zoomState.getMaxZoomRatio();
-
-                    zoomValueText.setText(
-                            String.format(
-                                    java.util.Locale.US,
-                                    "%.1fx",
-                                    atual
-                            )
-                    );
-
-                    zoomMinText.setText(
-                            String.format(
-                                    java.util.Locale.US,
-                                    "%.1fx",
-                                    minimo
-                            )
-                    );
-
-                    zoomMaxText.setText(
-                            String.format(
-                                    java.util.Locale.US,
-                                    "%.1fx",
-                                    maximo
-                            )
-                    );
-
-                    int progresso =
-                            Math.round(
-                                    zoomState.getLinearZoom()
-                                            * 100
-                            );
-
-                    zoomSeekBar.setProgress(
-                            progresso
-                    );
-                }
-        );
-
-
-
-
-
-            Log.i(
-                    "LUCAO_H264",
-                    "CAMERA CONFIGURADA: alvo=" +
-                            VIDEO_WIDTH + "x" +
-                            VIDEO_HEIGHT
-            );
-
-        } catch (Exception e) {
-
-            Log.e(
-                    "LUCAO_H264",
-                    "ERRO AO INICIAR CAMERA",
-                    e
-            );
-
-            statusText.setText("ERRO NA CAMERA");
-            statusText.setTextColor(Color.RED);
-        }
-
-    }, ContextCompat.getMainExecutor(this));
-}
-
-    private void analisarFrame(ImageProxy image) {
-
-    try {
-
-        if (!pcConectado) {
-    return;
-}
-
-if (!cameraAtiva) {
-    return;
-}
-
-// Caminho principal do LUCAO LINK:
-// CameraX -> NV12 -> MediaCodec H.264
-processarFrameH264(image);
-
-    } catch (Exception e) {
-
-        Log.e(
-                "LUCAO_H264",
-                "ERRO AO ANALISAR FRAME",
-                e
-        );
-
-    } finally {
-
-        image.close();
-    }
-}
-
-    private byte[] converterParaNV12(ImageProxy image) {
-
-    int width = image.getWidth();
-    int height = image.getHeight();
-
-    ImageProxy.PlaneProxy[] planes = image.getPlanes();
-
-    byte[] nv12 = new byte[width * height * 3 / 2];
-
-    int pos = 0;
-
-    ByteBuffer yBuffer = planes[0].getBuffer().duplicate();
-
-    int yBase = yBuffer.position();
-    int yRowStride = planes[0].getRowStride();
-    int yPixelStride = planes[0].getPixelStride();
-
-    if (yPixelStride == 1) {
-
-    // Caminho rápido:
-    // copia uma linha Y inteira de uma vez.
-    for (int row = 0; row < height; row++) {
-
-        int rowStart =
-                yBase + row * yRowStride;
-
-        yBuffer.position(rowStart);
-
-        yBuffer.get(
-                nv12,
-                pos,
-                width
-        );
-
-        pos += width;
-    }
-
-} else {
-
-    // Fallback para dispositivos com layout diferente.
-    for (int row = 0; row < height; row++) {
-        for (int col = 0; col < width; col++) {
-
-            nv12[pos++] = yBuffer.get(
-                    yBase +
-                    row * yRowStride +
-                    col * yPixelStride
-            );
-        }
-    }
-}
-
-    ByteBuffer uBuffer = planes[1].getBuffer().duplicate();
-    ByteBuffer vBuffer = planes[2].getBuffer().duplicate();
-
-    int uBase = uBuffer.position();
-    int vBase = vBuffer.position();
-
-    int uRowStride = planes[1].getRowStride();
-    int vRowStride = planes[2].getRowStride();
-
-    int uPixelStride = planes[1].getPixelStride();
-    int vPixelStride = planes[2].getPixelStride();
-
-    for (int row = 0; row < height / 2; row++) {
-        for (int col = 0; col < width / 2; col++) {
-
-            nv12[pos++] = uBuffer.get(
-                    uBase +
-                    row * uRowStride +
-                    col * uPixelStride
-            );
-
-            nv12[pos++] = vBuffer.get(
-                    vBase +
-                    row * vRowStride +
-                    col * vPixelStride
-            );
-        }
-    }
-
-    return nv12;
-}
-
-private void processarFrameH264(ImageProxy image) {
-
-
-    MediaCodec codec = h264Encoder;
-
-    if (codec == null) {
-        return;
-    }
-
-    // Se a webcam acabou de ser reativada,
-    // pede um novo keyframe ao encoder H.264.
-    if (solicitarKeyframeH264) {
-
-        try {
-
-            Bundle parametros = new Bundle();
-
-            parametros.putInt(
-                    MediaCodec.PARAMETER_KEY_REQUEST_SYNC_FRAME,
-                    0
-            );
-
-            codec.setParameters(parametros);
-
-            solicitarKeyframeH264 = false;
-
-            Log.i(
-                    "LUCAO_H264",
-                    "KEYFRAME SOLICITADO"
-            );
-
-        } catch (Exception e) {
-
-            Log.e(
-                    "LUCAO_H264",
-                    "ERRO AO SOLICITAR KEYFRAME",
-                    e
-            );
-        }
-    }
-
-    if (
-            image.getWidth() != VIDEO_WIDTH ||
-            image.getHeight() != VIDEO_HEIGHT
-    ) {
-
-        Log.w(
-                "LUCAO_H264",
-                "FRAME IGNORADO: camera=" +
-                        image.getWidth() + "x" +
-                        image.getHeight() +
-                        " encoder=" +
-                        VIDEO_WIDTH + "x" +
-                        VIDEO_HEIGHT
-        );
-
-        return;
-    }
-
-    try {
-
-        // ========================================
-        // ENTRADA: CameraX -> NV12 -> MediaCodec
-        // ========================================
-
-        int inputIndex =
-        codec.dequeueInputBuffer(0);
-
-if (inputIndex >= 0) {
-
-    byte[] nv12 =
-            converterParaNV12(image);
-
-    ByteBuffer inputBuffer =
-            codec.getInputBuffer(inputIndex);
-
-    if (inputBuffer != null) {
-
-        inputBuffer.clear();
-
-        if (inputBuffer.remaining() >= nv12.length) {
-
-            inputBuffer.put(nv12);
-
-            long presentationTimeUs =
-                    image.getImageInfo()
-                            .getTimestamp() / 1000L;
-
-            codec.queueInputBuffer(
-                    inputIndex,
-                    0,
-                    nv12.length,
-                    presentationTimeUs,
-                    0
-            );
-
-            h264FramesEntrada++;
-
-        } else {
-
-            Log.e(
-                    "LUCAO_H264",
-                    "BUFFER H264 PEQUENO: " +
-                            inputBuffer.remaining() +
-                            " < " +
-                            nv12.length
-            );
-
-            codec.queueInputBuffer(
-                    inputIndex,
-                    0,
-                    0,
-                    image.getImageInfo()
-                            .getTimestamp() / 1000L,
-                    0
-            );
-        }
-    }
-}
-
-        // ========================================
-        // SAIDA: MediaCodec -> H.264
-        // ========================================
-
-        MediaCodec.BufferInfo info =
-                new MediaCodec.BufferInfo();
-
-        while (true) {
-
-            int outputIndex =
-                    codec.dequeueOutputBuffer(
-                            info,
-                            0
-                    );
-
-            if (outputIndex >= 0) {
-
-                if (info.size > 0) {
-
-    ByteBuffer outputBuffer =
-            codec.getOutputBuffer(outputIndex);
-
-    if (outputBuffer != null) {
-
-        outputBuffer.position(info.offset);
-        outputBuffer.limit(
-                info.offset + info.size
-        );
-
-        byte[] h264 =
-                new byte[info.size];
-
-        outputBuffer.get(h264);
-
-        ExecutorService executor =
-        networkExecutor;
-
-if (executor != null) {
-
-    executor.execute(() -> {
-
-        OutputStream output =
-                videoOutput;
-
-        if (output == null) {
-            return;
-        }
-
-        try {
-
-            output.write(h264);
-
-        } catch (IOException e) {
-
-            Log.e(
-                    "LUCAO_TCP",
-                    "ERRO AO ENVIAR H264",
-                    e
-            );
-        }
-    });
-}
-
-        // Codec config contém SPS/PPS.
-        // Enviamos pelo TCP, mas não contamos
-        // como frame de vídeo.
-        if (
-                (info.flags &
-                        MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0
-        ) {
-
-            h264FramesSaida++;
-            h264BytesSaida += info.size;
-        }
-    }
-}
-
-codec.releaseOutputBuffer(
-        outputIndex,
-        false
-);
-
-            } else if (
-        outputIndex ==
-        MediaCodec.INFO_OUTPUT_FORMAT_CHANGED
-) {
-
-    MediaFormat outputFormat =
-            codec.getOutputFormat();
-
-    Log.i(
-            "LUCAO_H264",
-            "FORMATO H264: " +
-                    outputFormat
-    );
-
-    OutputStream output =
-            videoOutput;
-
-    if (output != null) {
-
-        ByteBuffer sps =
-                outputFormat.getByteBuffer("csd-0");
-
-        ByteBuffer pps =
-                outputFormat.getByteBuffer("csd-1");
-
-        if (sps != null) {
-
-            ByteBuffer copiaSps =
-                    sps.duplicate();
-
-            copiaSps.position(0);
-
-            byte[] dadosSps =
-                    new byte[copiaSps.remaining()];
-
-            copiaSps.get(dadosSps);
-
-            output.write(dadosSps);
-
-            Log.i(
-                    "LUCAO_TCP",
-                    "SPS ENVIADO: " +
-                            dadosSps.length +
-                            " bytes"
-            );
-        }
-
-        if (pps != null) {
-
-            ByteBuffer copiaPps =
-                    pps.duplicate();
-
-            copiaPps.position(0);
-
-            byte[] dadosPps =
-                    new byte[copiaPps.remaining()];
-
-            copiaPps.get(dadosPps);
-
-            output.write(dadosPps);
-
-            Log.i(
-                    "LUCAO_TCP",
-                    "PPS ENVIADO: " +
-                            dadosPps.length +
-                            " bytes"
-            );
-        }
-    }
-
-            } else {
-
-                break;
-            }
-        }
-
-        // ========================================
-        // ESTATISTICA A CADA ~1 SEGUNDO
-        // ========================================
-
-        long agora =
-                System.currentTimeMillis();
-
-        if (h264JanelaInicioMs == 0) {
-            h264JanelaInicioMs = agora;
-        }
-
-        long intervalo =
-                agora - h264JanelaInicioMs;
-
-        if (intervalo >= 1000) {
-
-            double fpsEntrada =
-                    h264FramesEntrada *
-                            1000.0 / intervalo;
-
-            double fpsSaida =
-                    h264FramesSaida *
-                            1000.0 / intervalo;
-
-            Log.i(
-                    "LUCAO_H264",
-                    String.format(
-                            java.util.Locale.US,
-                            "CONTINUO: entrada=%.1f FPS saida=%.1f FPS bytes=%d",
-                            fpsEntrada,
-                            fpsSaida,
-                            h264BytesSaida
-                    )
-            );
-
-            h264FramesEntrada = 0;
-            h264FramesSaida = 0;
-            h264BytesSaida = 0;
-            h264JanelaInicioMs = agora;
-        }
-
-    } catch (Exception e) {
-
-        Log.e(
-                "LUCAO_H264",
-                "ERRO NO H264 CONTINUO",
-                e
-        );
-    }
-}
-
-    private void enviarFrame(byte[] jpeg) {
-
-        HttpURLConnection connection = null;
-
-        try {
-
-            URL url =
-                    new URL(FRAME_URL);
-
-            connection =
-                    (HttpURLConnection) url.openConnection();
-
-            connection.setRequestMethod("POST");
-            connection.setDoOutput(true);
-
-            connection.setConnectTimeout(1000);
-            connection.setReadTimeout(1000);
-
-            connection.setRequestProperty(
-                    "Content-Type",
-                    "image/jpeg"
-            );
-
-            connection.setFixedLengthStreamingMode(
-                    jpeg.length
-            );
-
-            try (
-                    OutputStream output =
-                            connection.getOutputStream()
-            ) {
-
-                output.write(jpeg);
-            }
-
-            connection.getResponseCode();
-
-        } catch (IOException e) {
-
-            e.printStackTrace();
-
-        } finally {
-
-            if (connection != null) {
-                connection.disconnect();
-            }
-        }
-    }
-
-    private synchronized void prepararEncoderH264() {
-
-    if (h264Encoder != null) {
-        Log.i("LUCAO_H264", "ENCODER JA INICIADO");
-        return;
-    }
-
-    MediaCodec codec = null;
-
-    try {
-
-        MediaFormat format = MediaFormat.createVideoFormat(
-                MediaFormat.MIMETYPE_VIDEO_AVC,
-                VIDEO_WIDTH,
-                VIDEO_HEIGHT
-        );
-
-        format.setInteger(
-                MediaFormat.KEY_COLOR_FORMAT,
-                MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420SemiPlanar
-        );
-
-        format.setInteger(
-                MediaFormat.KEY_BIT_RATE,
-                VIDEO_BITRATE
-        );
-
-        format.setInteger(
-                MediaFormat.KEY_FRAME_RATE,
-                VIDEO_FPS
-        );
-
-        format.setInteger(
-        MediaFormat.KEY_LATENCY,
-        1
-);
-
-        format.setInteger(
-                MediaFormat.KEY_I_FRAME_INTERVAL,
-                1
-        );
-
-        codec = MediaCodec.createEncoderByType(
-        MediaFormat.MIMETYPE_VIDEO_AVC
-);
-
-Log.i(
-        "LUCAO_CODEC",
-        "ENCODER H264 SELECIONADO: " + codec.getName()
-);
-
-codec.configure(
-        format,
-        null,
-        null,
-        MediaCodec.CONFIGURE_FLAG_ENCODE
-);
-
-        codec.start();
-
-        // Só fica disponível para a câmera DEPOIS do start().
-        h264Encoder = codec;
-
-        Log.i(
-                "LUCAO_H264",
-                "ENCODER INICIADO: " +
-                        VIDEO_WIDTH + "x" +
-                        VIDEO_HEIGHT + " @" +
-                        VIDEO_FPS +
-                        " FPS / " +
-                        VIDEO_BITRATE +
-                        " bps"
-        );
-
-    } catch (Exception e) {
-
-        Log.e(
-                "LUCAO_H264",
-                "ERRO AO INICIAR H264",
-                e
-        );
-
-        if (codec != null) {
-            try {
-                codec.release();
-            } catch (Exception ignored) {
-            }
-        }
-
-        h264Encoder = null;
-    }
-}
-
-    private void listarEncodersH264() {
-
-    MediaCodecList codecList =
-            new MediaCodecList(MediaCodecList.ALL_CODECS);
-
-    for (MediaCodecInfo codecInfo :
-            codecList.getCodecInfos()) {
-
-        if (!codecInfo.isEncoder()) {
-            continue;
-        }
-
-        for (String tipo :
-                codecInfo.getSupportedTypes()) {
-
-            if (tipo.equalsIgnoreCase(
-                    MediaFormat.MIMETYPE_VIDEO_AVC
-            )) {
-
-                Log.i(
-                        "LUCAO_CODEC",
-                        "H264 ENCODER: " +
-                        codecInfo.getName() +
-                        " | hardware=" +
-                        codecInfo.isHardwareAccelerated()
-                );
-            }
-        }
-    }
-}
-
-private void listarFormatosH264() {
-
-    try {
-
-        MediaCodecInfo codecInfo = null;
-
-        MediaCodecList codecList =
-                new MediaCodecList(
-                        MediaCodecList.ALL_CODECS
-                );
-
-        for (MediaCodecInfo info :
-        codecList.getCodecInfos()) {
-
-    if (!info.isEncoder()) {
-        continue;
-    }
-
-    for (String tipo : info.getSupportedTypes()) {
-
-        if (tipo.equalsIgnoreCase(
-                MediaFormat.MIMETYPE_VIDEO_AVC
-        )) {
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
-                    info.isHardwareAccelerated()) {
-
-                codecInfo = info;
-                break;
-            }
-        }
-    }
-
-    if (codecInfo != null) {
-        break;
-    }
-}
-
-        if (codecInfo == null) {
-
-    Log.e(
-            "LUCAO_FORMAT",
-            "ENCODER H264 DE HARDWARE NAO ENCONTRADO"
-    );
-
-    return;
-}
-
-Log.i(
-        "LUCAO_FORMAT",
-        "ANALISANDO ENCODER: " + codecInfo.getName()
-);
-
-        MediaCodecInfo.CodecCapabilities caps =
-                codecInfo.getCapabilitiesForType(
-                        MediaFormat.MIMETYPE_VIDEO_AVC
-                );
-
-        for (int formato : caps.colorFormats) {
-
-            Log.i(
-                    "LUCAO_FORMAT",
-                    "COLOR FORMAT: " + formato
-            );
-        }
-
-    } catch (Exception e) {
-
-        Log.e(
-                "LUCAO_FORMAT",
-                "ERRO AO LISTAR FORMATOS",
-                e
-        );
-    }
-}
-
-private synchronized void conectarVideoTcp() {
-
-    if (
-            videoSocket != null &&
-            videoSocket.isConnected() &&
-            !videoSocket.isClosed()
-    ) {
-        return;
-    }
-
-    try {
-
-        Socket socket = new Socket(
-                VIDEO_HOST,
-                VIDEO_PORT
-        );
-
-        socket.setTcpNoDelay(true);
-
-        OutputStream output =
-                socket.getOutputStream();
-
-        videoSocket = socket;
-        videoOutput = output;
-
-        Log.i(
-                "LUCAO_TCP",
-                "VIDEO TCP CONECTADO: " +
-                        VIDEO_HOST + ":" +
-                        VIDEO_PORT
-        );
-
-    } catch (Exception e) {
-
-        Log.e(
-                "LUCAO_TCP",
-                "ERRO AO CONECTAR VIDEO TCP",
-                e
-        );
-
-        videoSocket = null;
-        videoOutput = null;
-    }
-}
+    // ============================================================
+    // CONEXAO HTTP DE CONTROLE (5050)
+    // ============================================================
 
     private void testarConexao() {
 
         Log.i(
-        "LUCAO_NET",
+        TAG,
         "BOTAO CONECTAR - servidor=" + SERVER
 );
 
-        statusText.setText("CONECTANDO...");
-        statusText.setTextColor(Color.YELLOW);
-        connectionBadge.setText("● CONECTANDO");
-connectionBadge.setTextColor(Color.rgb(167, 139, 250));
+        statusText.setText("conectando...");
+        statusText.setTextColor(
+                ContextCompat.getColor(
+                        this,
+                        R.color.term_warning
+                )
+        );
 
         connectButton.setEnabled(false);
 
@@ -1336,7 +626,7 @@ connectionBadge.setTextColor(Color.rgb(167, 139, 250));
                         connection.getResponseCode();
 
                         Log.i(
-        "LUCAO_NET",
+        TAG,
         "HTTP RESPONSE=" + response
 );
 
@@ -1346,37 +636,27 @@ connectionBadge.setTextColor(Color.rgb(167, 139, 250));
                         response < 300
                 ) {
 
-                    pcConectado = true;
-
-// Pipeline de vídeo agora pertence exclusivamente
-// ao CameraForegroundService.
-// conectarVideoTcp();
-// prepararEncoderH264();
-
-runOnUiThread(() -> {
+                    runOnUiThread(() -> {
 
                         statusText.setText(
-                                "PC CONECTADO"
+                                "online"
                         );
 
                         statusText.setTextColor(
-                                Color.rgb(0, 255, 136)
+                                ContextCompat.getColor(
+                                        MainActivity.this,
+                                        R.color.term_success
+                                )
                         );
-                        connectionBadge.setText("● CONECTADO");
-connectionBadge.setTextColor(
-        Color.rgb(57, 255, 136)
-);
 
                         connectButton.setText(
-                                "CONECTADO"
+                                "conectado"
                         );
 
                         connectButton.setEnabled(true);
                     });
 
                 } else {
-
-                    pcConectado = false;
 
                     mostrarErro(
                             "ERRO HTTP " + response
@@ -1385,16 +665,14 @@ connectionBadge.setTextColor(
 
             } catch (IOException e) {
 
-    pcConectado = false;
-
     Log.e(
-            "LUCAO_NET",
+            TAG,
             "ERRO NA CONEXAO HTTP",
             e
     );
 
     mostrarErro(
-            "PC NAO ENCONTRADO"
+            "pc offline"
     );
 
             } finally {
@@ -1412,25 +690,18 @@ connectionBadge.setTextColor(
         runOnUiThread(() -> {
 
             statusText.setText(mensagem);
-            statusText.setTextColor(Color.RED);
-            connectionBadge.setText("● OFFLINE");
-connectionBadge.setTextColor(Color.RED);
+            statusText.setTextColor(
+                    ContextCompat.getColor(
+                            this,
+                            R.color.term_danger
+                    )
+            );
 
             connectButton.setText(
-                    "TENTAR NOVAMENTE"
+                    "reconectar"
             );
 
             connectButton.setEnabled(true);
         });
-    }
-
-    @Override
-    protected void onDestroy() {
-
-        super.onDestroy();
-
-        if (cameraExecutor != null) {
-            cameraExecutor.shutdown();
-        }
     }
 }

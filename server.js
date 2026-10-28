@@ -170,6 +170,45 @@ app.get("/camera", (req, res) => {
     `);
 });
 
+// ============================================================
+// CONTROLE DA CAMERA (CHECKPOINT 27)
+// ============================================================
+
+let zoomPendente = null;
+
+// Rota para o PC enviar o comando de zoom (ex: http://localhost:5050/control/zoom/0.5)
+app.get("/control/zoom/:value", (req, res) => {
+    const zoom = Number(req.params.value);
+
+    if (!Number.isFinite(zoom) || zoom < 0 || zoom > 1) {
+        return res.status(400).send("ZOOM DEVE ESTAR ENTRE 0 E 1");
+    }
+
+    zoomPendente = zoom;
+    console.log(`[CONTROLE] Zoom solicitado: ${zoom}`);
+
+    res.json({
+        ok: true,
+        zoom
+    });
+});
+
+// Rota para o Android consultar se há comandos
+app.get("/control/poll", (req, res) => {
+    if (zoomPendente === null) {
+        return res.json({
+            command: null
+        });
+    }
+
+    const zoom = zoomPendente;
+    zoomPendente = null; // Limpa após entregar para não repetir
+
+    res.json({
+        command: "zoom",
+        value: zoom
+    });
+});
 app.listen(PORT, "0.0.0.0", () => {
 
     console.log("");

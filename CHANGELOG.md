@@ -524,3 +524,41 @@ Physical USB disconnect/reconnect successfully restores the complete video pipel
 ```text
 Moto G22 -> H.264 -> ADB Reverse -> USB -> Windows -> FFplay
 640x480 @ ~30 FPS
+
+---
+
+## Checkpoint 27 - Terminal Interface and PC Camera Control
+
+### Added
+
+- New Android interface based on the terminal.css design system
+  (dark background, monospace typography, cyan accents, square borders,
+  window title bar with status lights).
+- Live camera preview inside the interface (Preview use case).
+- Terminal-style square toggle for WEBCAM and MICROPHONE.
+- Zoom slider now reflects the real CameraX zoom state.
+- PC -> Android zoom control over HTTP:
+  `GET /control/zoom/:value` and `GET /control/poll`.
+- Android control polling every 150 ms while the PC is connected.
+
+### Fixed
+
+- Status badge now updates immediately when the H.264 socket connects
+  or reconnects (`broadcastStatus()` after a successful connect).
+- Zoom slider thumb no longer clipped at the edges.
+- Removed unused legacy drawables and switch color selectors.
+
+### Validated
+
+```text
+Device: Xiaomi Redmi Note 11 (2201117TL)
+Android: 13 / API 33
+SoC: Qualcomm bengal
+Resolution: 640x480
+Frame rate: ~30 FPS with live preview
+Transport: USB / ADB Reverse
+```
+
+Zoom command sent from the PC (`/control/zoom/0.5`) was applied to the
+running camera (linear zoom 0.5 -> 1.8x) and reflected on the Android
+interface without restarting the stream.

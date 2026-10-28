@@ -1,7 +1,14 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
     <!-- Base application theme. -->
     <style name="Base.Theme.LUCAOLINK" parent="Theme.Material3.DayNight.NoActionBar">
-        <!-- Customize your dark theme here. -->
-        <!-- <item name="colorPrimary">@color/my_dark_primary</item> -->
+        <!-- LUCAO LINK - tema terminal (sempre escuro) -->
+        <item name="colorPrimary">@color/term_primary</item>
+        <item name="colorOnPrimary">@color/term_bg</item>
+        <item name="android:windowBackground">@color/term_bg</item>
+        <item name="android:statusBarColor">@color/term_bg</item>
+        <item name="android:navigationBarColor">@color/term_bg</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:colorBackground">@color/term_bg</item>
     </style>
 </resources>

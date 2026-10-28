@@ -399,7 +399,9 @@ Virtual Webcam
 [x] Low-latency H.264 playback timing
 [ ] Exposure controls
 [ ] Image filters and adjustments
-[ ] Automatic network reconnection
+[x] Automatic network reconnection
+[x] PC camera zoom control (HTTP)
+[x] Terminal-style interface
 [ ] Microphone capture
 [ ] Microphone sensitivity / gain
 [ ] Audio transport
@@ -594,7 +596,9 @@ USB / ADB Reverse
 STABLE
 ```
 
----## Checkpoint 24 — Dedicated USB Mode
+---
+
+## Checkpoint 24 — Dedicated USB Mode
 
 O LUCAO LINK agora possui uma implementação experimental de modo dedicado via USB, testada em um Motorola Moto G22 com Android 12.
 
@@ -624,6 +628,8 @@ Windows :5050
 Android 127.0.0.1:5051
         ↓ USB / ADB Reverse
 Windows :5051
+```
+
 ---
 
 
@@ -684,3 +690,61 @@ SPS/PPS + KEYFRAME
       |
       v
 VIDEO RETURNS AUTOMATICALLY
+```
+
+---
+
+## Checkpoint 27 — Terminal Interface and PC Camera Control
+
+The Android interface was rebuilt following the `terminal.css` design
+system, and camera zoom can now be controlled from the PC.
+
+### Interface
+
+```text
+Background        #050505
+Surface           #000000
+Primary accent    #8BE9FD (cyan)
+Success / danger  #50FA7B / #FF5555
+Borders           #333333
+Typography        monospace, uppercase labels, letter spacing
+```
+
+The screen is a single terminal window:
+
+```text
+[ o o o ]  lucao@link:~$                    STREAM ATIVO
+   LUCAO LINK
+   android -> windows webcam
+
+   > PC                                    ONLINE
+   > PREVIEW        (live camera preview)
+   > WEBCAM                                 [x]
+   > ZOOM                                    1.0x
+   > MICROFONE                     [ em desenvolvimento ]
+   [ CONECTAR AO PC ]
+   5050/http - 5051/h264 - usb
+   lucao@link:~$ _
+```
+
+The pipeline still belongs exclusively to `CameraForegroundService`;
+`MainActivity` only supplies the `PreviewView` surface.
+
+### PC -> Android control
+
+```text
+GET  /control/zoom/:value     PC asks for a zoom change (0..1)
+GET  /control/poll            Android polls pending commands (150 ms)
+```
+
+The service converts the value with `CameraControl.setLinearZoom()` and
+broadcasts the real `zoomRatio` back to the interface.
+
+### Validated
+
+```text
+Device: Xiaomi Redmi Note 11 (2201117TL)
+Android: 13 / API 33
+Video: 640x480 @ ~30 FPS with live preview
+Zoom: PC 0.5 linear -> 1.8x on the running camera
+```

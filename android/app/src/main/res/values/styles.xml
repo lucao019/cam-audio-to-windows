@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!-- ============================================================
+         TIPOGRAFIA TERMINAL
+         Tudo em monospace, caixa alta e letter-spacing,
+         igual ao terminal.css.
+         ============================================================ -->
+
+    <style name="TermText">
+        <item name="android:fontFamily">monospace</item>
+        <item name="android:textColor">@color/term_fg</item>
+        <item name="android:includeFontPadding">false</item>
+    </style>
+
+    <style name="TermTitle" parent="TermText">
+        <item name="android:textColor">@color/term_primary</item>
+        <item name="android:textSize">22sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:textAllCaps">true</item>
+        <item name="android:letterSpacing">0.14</item>
+        <item name="android:shadowColor">#668BE9FD</item>
+        <item name="android:shadowRadius">10</item>
+        <item name="android:shadowDx">0</item>
+        <item name="android:shadowDy">0</item>
+    </style>
+
+    <style name="TermSubtitle" parent="TermText">
+        <item name="android:textColor">@color/term_muted</item>
+        <item name="android:textSize">9sp</item>
+        <item name="android:textAllCaps">true</item>
+        <item name="android:letterSpacing">0.12</item>
+    </style>
+
+    <style name="TermLabel" parent="TermText">
+        <item name="android:textColor">@color/term_fg</item>
+        <item name="android:textSize">11sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:textAllCaps">true</item>
+        <item name="android:letterSpacing">0.1</item>
+    </style>
+
+    <style name="TermSection" parent="TermText">
+        <item name="android:textColor">@color/term_primary</item>
+        <item name="android:textSize">10sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:textAllCaps">true</item>
+        <item name="android:letterSpacing">0.18</item>
+    </style>
+
+    <style name="TermMuted" parent="TermText">
+        <item name="android:textColor">@color/term_muted</item>
+        <item name="android:textSize">9sp</item>
+        <item name="android:letterSpacing">0.06</item>
+    </style>
+
+    <style name="TermValue" parent="TermText">
+        <item name="android:textColor">@color/term_primary</item>
+        <item name="android:textSize">11sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:letterSpacing">0.06</item>
+    </style>
+
+    <style name="TermStatus" parent="TermText">
+        <item name="android:textColor">@color/term_muted</item>
+        <item name="android:textSize">11sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:textAllCaps">true</item>
+        <item name="android:letterSpacing">0.1</item>
+    </style>
+
+    <style name="TermDivider">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">1dp</item>
+        <item name="android:background">@color/term_border</item>
+    </style>
+
+</resources>

@@ -2,4 +2,25 @@
 <resources>
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
+
+    <!-- ============================================================
+         PALETA TERMINAL.CSS (tema default)
+         ============================================================ -->
+
+    <color name="term_bg">#FF050505</color>
+    <color name="term_surface">#FF000000</color>
+    <color name="term_panel">#FF0A0A0A</color>
+    <color name="term_fg">#FFCCCCCC</color>
+    <color name="term_muted">#FF666666</color>
+    <color name="term_border">#FF333333</color>
+
+    <color name="term_primary">#FF8BE9FD</color>
+    <color name="term_success">#FF50FA7B</color>
+    <color name="term_danger">#FFFF5555</color>
+    <color name="term_warning">#FFF1FA8C</color>
+    <color name="term_info">#FFBD93F9</color>
+    <color name="term_magenta">#FFFF79C6</color>
+
+    <color name="term_primary_dim">#338BE9FD</color>
+    <color name="term_success_dim">#3350FA7B</color>
 </resources>

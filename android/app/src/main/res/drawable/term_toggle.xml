@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<!-- Toggle quadrado estilo terminal: preenchido = ON -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <item android:state_checked="true">
+        <shape android:shape="rectangle">
+            <solid android:color="@color/term_primary" />
+            <stroke
+                android:width="1dp"
+                android:color="@color/term_primary" />
+        </shape>
+    </item>
+
+    <item android:state_enabled="false">
+        <shape android:shape="rectangle">
+            <solid android:color="@color/term_bg" />
+            <stroke
+                android:width="1dp"
+                android:color="@color/term_border" />
+        </shape>
+    </item>
+
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@color/term_bg" />
+            <stroke
+                android:width="1dp"
+                android:color="@color/term_muted" />
+        </shape>
+    </item>
+
+</selector>

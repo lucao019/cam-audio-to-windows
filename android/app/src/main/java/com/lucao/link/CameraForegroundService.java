@@ -1,5 +1,11 @@
 package com.lucao.link;
 
+import org.json.JSONObject;
+import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.util.Scanner;
+
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
@@ -15,6 +21,7 @@ import android.util.Log;
 
 import androidx.annotation.Nullable;
 import androidx.camera.core.ImageProxy;
+import androidx.camera.core.Preview;
 import androidx.core.app.NotificationCompat;
 import androidx.lifecycle.Lifecycle;
 import androidx.lifecycle.LifecycleOwner;
@@ -67,8 +74,27 @@ public class CameraForegroundService extends Service
     private static final int VIDEO_FPS = 30;
     private static final int VIDEO_BITRATE = 2_000_000;
 
+    // Host 127.0.0.1 = modo dedicado USB via ADB Reverse
+    // (companion.js monta os tuneis tcp:5050 e tcp:5051).
     private static final String VIDEO_HOST = "127.0.0.1";
     private static final int VIDEO_PORT = 5051;
+
+    // ============================================================
+    // ACOES DE CONTROLE (recebidas da MainActivity)
+    // ============================================================
+
+    public static final String ACTION_SET_ZOOM =
+            "com.lucao.link.ACTION_SET_ZOOM";
+    public static final String ACTION_SET_CAMERA_ACTIVE =
+            "com.lucao.link.ACTION_SET_CAMERA_ACTIVE";
+    public static final String ACTION_START_CAMERA =
+            "com.lucao.link.ACTION_START_CAMERA";
+    public static final String ACTION_REQUEST_STATUS =
+            "com.lucao.link.ACTION_REQUEST_STATUS";
+
+    // Broadcast de status enviado de volta para a UI
+    public static final String ACTION_STATUS =
+            "com.lucao.link.ACTION_STATUS";
 
     // ============================================================
     // H264 / TCP
@@ -92,6 +118,15 @@ public class CameraForegroundService extends Service
 
     private ProcessCameraProvider cameraProvider;
     private Camera cameraAtual;
+
+    // Superficie opcional enviada pela MainActivity (PreviewView).
+    private static volatile Preview.SurfaceProvider previewProvider;
+
+    public static void setPreviewProvider(
+            Preview.SurfaceProvider provider
+    ) {
+        previewProvider = provider;
+    }
 
     // ============================================================
     // ESTADO
@@ -142,7 +177,7 @@ videoWriterExecutor =
             Lifecycle.State.CREATED
     );
 
-    // Foreground Service precisa da notificação
+    // Foreground Service precisa da notificaÃ§Ã£o
     criarCanalNotificacao();
 
     Notification notification =
@@ -168,7 +203,7 @@ videoWriterExecutor =
             notification
     );
 
-    // Agora o Service está ativo para o CameraX
+    // Agora o Service estÃ¡ ativo para o CameraX
     lifecycleRegistry.setCurrentState(
             Lifecycle.State.STARTED
     );
@@ -195,9 +230,11 @@ networkExecutor.execute(() -> {
     } else {
 
         pcConectado = true;
+        broadcastStatus();
     }
 
     prepararEncoderH264();
+    iniciarPollingControle();
 
     Log.i(
             "LUCAO_SERVICE",
@@ -216,6 +253,7 @@ networkExecutor.execute(() -> {
                 iniciarCamera();
             });
 });
+
 }
 
 
@@ -235,7 +273,7 @@ networkExecutor.execute(() -> {
                     );
 
             channel.setDescription(
-                    "Mantém a webcam LUCAO LINK ativa"
+                    "MantÃ©m a webcam LUCAO LINK ativa"
             );
 
             NotificationManager manager =
@@ -281,6 +319,8 @@ networkExecutor.execute(() -> {
             "LUCAO_TCP",
             "CONEXAO TCP DESCARTADA"
     );
+
+    broadcastStatus();
 }
 
 private boolean enviarCabecalhoH264() {
@@ -298,8 +338,8 @@ private boolean enviarCabecalhoH264() {
     byte[] pps =
             h264Pps;
 
-    // Primeira inicialização:
-    // o encoder ainda pode não ter produzido SPS/PPS.
+    // Primeira inicializaÃ§Ã£o:
+    // o encoder ainda pode nÃ£o ter produzido SPS/PPS.
     if (sps == null || pps == null) {
 
         Log.w(
@@ -390,6 +430,8 @@ private void iniciarReconexaoVideo() {
 
     solicitarKeyframeH264 = true;
 
+    broadcastStatus();
+
     Log.i(
             "LUCAO_TCP",
             "VIDEO TCP RECONECTADO - KEYFRAME PENDENTE"
@@ -455,6 +497,8 @@ private void iniciarReconexaoVideo() {
                             VIDEO_PORT
             );
 
+            broadcastStatus();
+
         } catch (Exception e) {
 
             Log.e(
@@ -467,6 +511,59 @@ private void iniciarReconexaoVideo() {
             videoOutput = null;
         }
     }
+
+    // ============================================================
+    // STATUS -> UI (broadcast)
+    // ============================================================
+
+    /**
+     * Envia o estado do pipeline de video de volta para a
+     * MainActivity: conexao TCP + estado atual do zoom.
+     */
+    private void broadcastStatus() {
+
+    Intent intent = new Intent(ACTION_STATUS);
+
+    intent.setPackage(getPackageName());
+
+    intent.putExtra("conectado", pcConectado);
+
+    Camera camera = cameraAtual;
+
+    if (camera != null) {
+
+        androidx.camera.core.ZoomState zoomState =
+                camera
+                        .getCameraInfo()
+                        .getZoomState()
+                        .getValue();
+
+        if (zoomState != null) {
+
+            intent.putExtra(
+                    "zoom",
+                    zoomState.getZoomRatio()
+            );
+
+            intent.putExtra(
+                    "zoomMin",
+                    zoomState.getMinZoomRatio()
+            );
+
+            intent.putExtra(
+                    "zoomMax",
+                    zoomState.getMaxZoomRatio()
+            );
+
+            intent.putExtra(
+                    "linearZoom",
+                    zoomState.getLinearZoom()
+            );
+        }
+    }
+
+    sendBroadcast(intent);
+}
 
     // ============================================================
 // CAMERAX
@@ -600,14 +697,42 @@ Log.i(
             CameraSelector cameraSelector =
                     CameraSelector.DEFAULT_BACK_CAMERA;
 
+            // Preview local opcional (so quando a Activity esta
+            // visivel e entregou uma SurfaceProvider).
+            Preview.SurfaceProvider provider = previewProvider;
+
+            Preview preview = null;
+
+            if (provider != null) {
+
+                preview = new Preview.Builder()
+                        .setResolutionSelector(resolutionSelector)
+                        .build();
+
+                preview.setSurfaceProvider(provider);
+            }
+
             cameraProvider.unbindAll();
 
-            cameraAtual =
-                    cameraProvider.bindToLifecycle(
-                            this,
-                            cameraSelector,
-                            imageAnalysis
-                    );
+            if (preview != null) {
+
+                cameraAtual =
+                        cameraProvider.bindToLifecycle(
+                                this,
+                                cameraSelector,
+                                preview,
+                                imageAnalysis
+                        );
+
+            } else {
+
+                cameraAtual =
+                        cameraProvider.bindToLifecycle(
+                                this,
+                                cameraSelector,
+                                imageAnalysis
+                        );
+            }
 
             Log.i(
                     "LUCAO_CAMERA",
@@ -618,6 +743,22 @@ Log.i(
                             VIDEO_FPS +
                             " FPS"
             );
+
+            // Mantem a UI atualizada com o zoom real da camera.
+            cameraAtual
+                    .getCameraInfo()
+                    .getZoomState()
+                    .observe(
+                            this,
+                            zoomState -> {
+
+                                if (zoomState == null) {
+                                    return;
+                                }
+
+                                broadcastStatus();
+                            }
+                    );
 
         } catch (Exception e) {
 
@@ -631,13 +772,6 @@ Log.i(
     }, ContextCompat.getMainExecutor(this));
 }
         private void analisarFrame(ImageProxy image) {
-
-    Log.i(
-            "LUCAO_FRAME",
-            "FRAME RECEBIDO: " +
-                    image.getWidth() + "x" +
-                    image.getHeight()
-    );
 
     try {
 
@@ -705,7 +839,7 @@ Log.i(
 
         if (yPixelStride == 1) {
 
-            // Caminho rápido.
+            // Caminho rÃ¡pido.
             // Foi o que permitiu manter ~30 FPS.
 
             for (
@@ -1015,44 +1149,57 @@ Log.i(
                                     h264
                             );
 
-                            ExecutorService executor =
-        videoWriterExecutor;
-
-if (executor != null) {
-    executor.execute(() -> {
-
-        OutputStream output =
-                videoOutput;
-
-        if (output == null) {
-            return;
-        }
-
-        try {
-
-            output.write(h264);
-
-        } catch (IOException e) {
-
-            Log.e(
-                    "LUCAO_TCP",
-                    "CONEXAO H264 PERDIDA: " +
-                            e.getMessage()
-            );
-
-            desconectarVideoTcp();
-
-            iniciarReconexaoVideo();
-        }
-    });
-}
-
+                            // SPS/PPS ja foram enviados via
+                            // INFO_OUTPUT_FORMAT_CHANGED.
+                            // Enviar tambem o buffer COC_CONFIG
+                            // duplicaria o cabecalho no stream.
                             if (
                                     (
                                             info.flags &
                                             MediaCodec.BUFFER_FLAG_CODEC_CONFIG
-                                    ) == 0
+                                    ) != 0
                             ) {
+
+                                Log.i(
+                                        "LUCAO_TCP",
+                                        "BUFFER COC_CONFIG IGNORADO: " +
+                                                info.size +
+                                                " bytes"
+                                );
+
+                            } else {
+
+                                ExecutorService executor =
+            videoWriterExecutor;
+
+    if (executor != null) {
+        executor.execute(() -> {
+
+            OutputStream output =
+                    videoOutput;
+
+            if (output == null) {
+                return;
+            }
+
+            try {
+
+                output.write(h264);
+
+            } catch (IOException e) {
+
+                Log.e(
+                        "LUCAO_TCP",
+                        "CONEXAO H264 PERDIDA: " +
+                                e.getMessage()
+                );
+
+                desconectarVideoTcp();
+
+                iniciarReconexaoVideo();
+            }
+        });
+    }
 
                                 h264FramesSaida++;
 
@@ -1410,9 +1557,156 @@ if (executor != null) {
 
     @Nullable
     @Override
-    public IBinder onBind(
-            Intent intent
-    ) {
-        return null;
+public int onStartCommand(
+        Intent intent,
+        int flags,
+        int startId
+) {
+
+    if (intent != null) {
+
+        String action = intent.getAction();
+
+        if (ACTION_SET_ZOOM.equals(action)) {
+
+            float zoom =
+                    intent.getFloatExtra(
+                            "zoom",
+                            0.0f
+                    );
+
+            zoom = Math.max(
+                    0.0f,
+                    Math.min(1.0f, zoom)
+            );
+
+            aplicarZoomCamera(zoom);
+
+        } else if (ACTION_SET_CAMERA_ACTIVE.equals(action)) {
+
+            boolean ativo =
+                    intent.getBooleanExtra(
+                            "ativo",
+                            true
+                    );
+
+            cameraAtiva = ativo;
+
+            // Reativou a webcam: pede um keyframe novo
+            // para o stream voltar limpo.
+            if (ativo) {
+                solicitarKeyframeH264 = true;
+            }
+
+            Log.i(
+                    "LUCAO_CONTROL",
+                    "WEBCAM " + (ativo ? "ON" : "OFF")
+            );
+
+        } else if (ACTION_START_CAMERA.equals(action)) {
+
+            // Permissao de camera acabou de ser concedida
+            // (ou a Activity quer reiniciar a camera).
+            ContextCompat
+                    .getMainExecutor(this)
+                    .execute(this::iniciarCamera);
+
+        } else if (ACTION_REQUEST_STATUS.equals(action)) {
+
+            broadcastStatus();
+        }
     }
+
+    return START_STICKY;
+}
+
+// ============================================================
+// BINDER
+// ============================================================
+
+@Nullable
+@Override
+public IBinder onBind(
+        Intent intent
+) {
+    return null;
+}
+
+// ============================================================
+    // POLLING DE CONTROLE (HTTP 5050)
+    // ============================================================
+
+    private void iniciarPollingControle() {
+        // Usa o mesmo executor de rede para rodar em background
+        networkExecutor.execute(() -> {
+            Log.i("LUCAO_CONTROL", "Iniciando polling de controle em 127.0.0.1:5050");
+
+            int falhasPolling = 0;
+
+            while (servicoAtivo) {
+                try {
+                    Thread.sleep(150); // Consulta o servidor a cada 150ms
+
+                    // Se o USB nÃ£o estiver roteado ou o PC offline, evita poluir o log
+                    if (!pcConectado) continue;
+
+                    URL url = new URL("http://127.0.0.1:5050/control/poll");
+                    HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                    conn.setRequestMethod("GET");
+                    conn.setConnectTimeout(1000);
+                    conn.setReadTimeout(1000);
+
+                    if (conn.getResponseCode() == 200) {
+                        InputStream in = new java.io.BufferedInputStream(conn.getInputStream());
+                        Scanner scanner = new Scanner(in).useDelimiter("\\A");
+                        String response = scanner.hasNext() ? scanner.next() : "";
+                        in.close();
+
+                        if (response.contains("\"command\":\"zoom\"")) {
+                            JSONObject json = new JSONObject(response);
+                            if (json.has("value")) {
+                                float zoomValue = (float) json.getDouble("value");
+                                aplicarZoomCamera(zoomValue);
+                            }
+                        }
+                    }
+                    conn.disconnect();
+
+                    falhasPolling = 0;
+
+                } catch (Exception e) {
+                    // Polling continua sempre; loga periodicamente
+                    // para nao silenciar falhas reais.
+                    falhasPolling++;
+
+                    if (falhasPolling % 100 == 1) {
+                        Log.w(
+                                "LUCAO_CONTROL",
+                                "POLLING FALHOU (" +
+                                        falhasPolling +
+                                        "): " +
+                                        e.getMessage()
+                        );
+                    }
+                }
+            }
+        });
+    }
+
+    private void aplicarZoomCamera(float zoom) {
+        // Envia o comando para a Thread Principal do Android (seguranÃ§a do CameraX)
+        ContextCompat.getMainExecutor(this).execute(() -> {
+            if (cameraAtual != null) {
+                try {
+                    cameraAtual.getCameraControl().setLinearZoom(zoom);
+                    Log.i("LUCAO_CONTROL", "Zoom aplicado via PC: " + zoom);
+                } catch (Exception e) {
+                    Log.e("LUCAO_CONTROL", "Erro ao aplicar zoom via PC", e);
+                }
+            } else {
+                Log.w("LUCAO_CONTROL", "Zoom ignorado - cameraAtual ainda Ã© nula");
+            }
+        });
+    }
+
 }
