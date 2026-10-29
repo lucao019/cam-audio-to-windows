@@ -423,6 +423,8 @@ body {
 
 .hud .sep { color: var(--border-color); }
 
+#hudMic.is-mudo { color: var(--danger, #e05555); }
+
 /* ------ CONTROLES ------ */
 
 .controles {

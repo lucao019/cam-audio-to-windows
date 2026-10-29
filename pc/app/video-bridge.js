@@ -10,18 +10,27 @@ const { spawn } = require("child_process");
 //
 //   LUCAO/1 <deviceId> <nome> <transporte>\n
 //
-// Porta 5052 (HTTP): entrega o mesmo video remuxado em MP4
+// Porta 5054 (TCP): recebe o audio AAC (ADTS) do mesmo
+// aparelho, identificado pelo mesmo handshake LUCAO/1. O
+// audio e remuxado em fMP4 so-de-audio por um segundo ffmpeg
+// e injetado no mesmo /stream do video (duas tracks MSE).
+//
+// Porta 5052 (HTTP): entrega video (+ audio) remuxado em MP4
 // fragmentado (fMP4) para o <video> do app (MSE).
 //
 //   GET /info/:id   -> estado/codec/geracao da sessao
 //   GET /stream/:id -> init segment + fragmentos ao vivo
 //
-// Cada sessao tem um processo ffmpeg que apenas troca o
-// container (Annex B -> fMP4, -c:v copy). O video nao e
-// recodificado, entao o custo de CPU e minimo.
+// Cada sessao tem um processo ffmpeg de video que apenas troca
+// o container (Annex B -> fMP4, -c:v copy); quando o audio
+// chega, um segundo ffmpeg (ADTS -> fMP4, -c:a copy) cuida da
+// track de som. Nada e recodificado, entao o custo de CPU e
+// minimo. O audio NUNCA bloqueia o video: sao pipelines
+// independentes.
 // ============================================================
 
 const PORTA_VIDEO = 5051;
+const PORTA_AUDIO = 5054;
 const PORTA_STREAM = 5052;
 const PORTA_CONTROLE = 5050;
 
@@ -29,6 +38,12 @@ const HANDSHAKE_TIMEOUT_MS = 2500;
 const RETENCAO_SESSAO_MS = 60 * 1000;
 const MAX_HANDSHAKE_BYTES = 4096;
 const MAX_CAIXA_BYTES = 64 * 1024 * 1024;
+
+// O ffmpeg escreve no moov o fourcc do sample entry como
+// "mp4a" (sem o object type). O Chromium so aceita a string
+// MSE "mp4a.40.2" (AAC-LC), entao reescrevemos o sample entry
+// no init segment antes de mandar para o <video>.
+const CODEC_AUDIO_MSE = "mp4a.40.2";
 
 const CORS = {
     "Access-Control-Allow-Origin": "*",
@@ -41,6 +56,7 @@ const CORS = {
 const sessoes = new Map();
 
 let servidorVideo = null;
+let servidorAudio = null;
 let servidorStream = null;
 let configuracao = null;
 let intervaloLimpeza = null;
@@ -276,8 +292,21 @@ function ativarCliente(sessao, cliente) {
         return;
     }
 
+    if (cliente.audio) {
+        if (!sessao.audioIni) {
+            return false;
+        }
+
+        escrever(cliente, sessao.audioIni);
+        cliente.ativo = true;
+
+        return true;
+    }
+
     escrever(cliente, sessao.init);
     cliente.ativo = true;
+
+    return true;
 }
 
 function publicarFragmento(sessao) {
@@ -299,6 +328,10 @@ function publicarFragmento(sessao) {
             continue;
         }
 
+        if (cliente.audio) {
+            continue;
+        }
+
         if (!cliente.ativo) {
             ativarCliente(sessao, cliente);
         }
@@ -309,7 +342,8 @@ function publicarFragmento(sessao) {
     }
 }
 
-function aceitarCliente(sessao, req, res) {
+function aceitarCliente(sessao, req, res, faixa) {
+    const audio = faixa === "audio";
     res.writeHead(200, {
         ...CORS,
         "Content-Type": "video/mp4",
@@ -327,6 +361,7 @@ function aceitarCliente(sessao, req, res) {
         res,
         ativo: false,
         fechado: false,
+        audio,
         desde: Date.now()
     };
 
@@ -342,12 +377,19 @@ function aceitarCliente(sessao, req, res) {
     res.on("error", remover);
 
     // Quem chega no meio da transmissao recebe o init e o
-    // ultimo fragmento completo: comeca a tocar na hora.
-    if (sessao.init) {
+    // ultimo fragmento completo da sua faixa: comeca a tocar
+    // na hora, sem esperar o proximo keyframe.
+    const init = audio ? sessao.audioIni : sessao.init;
+
+    if (init) {
         ativarCliente(sessao, cliente);
 
-        if (sessao.ultimoFragmento) {
-            escrever(cliente, sessao.ultimoFragmento);
+        const ultimo = audio
+            ? sessao.audioUltimoFragmento
+            : sessao.ultimoFragmento;
+
+        if (ultimo) {
+            escrever(cliente, ultimo);
         }
     }
 
@@ -443,6 +485,271 @@ function iniciarFfmpeg(sessao) {
 }
 
 // ------------------------------------------------------------
+// FFMPEG DE AUDIO: AAC (ADTS) -> MP4 fragmentado (track unica)
+// ------------------------------------------------------------
+
+function argumentosFfmpegAudio() {
+    return [
+        "-hide_banner",
+        "-loglevel", "error",
+        "-fflags", "nobuffer",
+        "-flags", "low_delay",
+        "-analyzeduration", "0",
+        "-probesize", "32768",
+        "-f", "aac",
+        "-i", "pipe:0",
+        // ADTS traz cabecalhos de 7 bytes por frame; o MP4 exige
+        // AAC cru (AudioSpecificConfig). Sem esse bsf o muxer
+        // recusa com "Malformed AAC bitstream".
+        "-c:a", "copy",
+        "-bsf:a", "aac_adtstoasc",
+        "-f", "mp4",
+        "-movflags", "frag_keyframe+empty_moov+default_base_moof",
+        "-frag_duration", "100000",
+        "-flush_packets", "1",
+        "pipe:1"
+    ];
+}
+
+// O init do ffmpeg ja vem pronto: o sample entry "mp4a" contem
+// o box "esds" com objectTypeIndication 0x40 (MPEG-4 Audio) e o
+// AudioSpecificConfig com audioObjectType 2 (AAC-LC). Isso e
+// exatamente o que a string MSE "mp4a.40.2" descreve, entao o
+// init passa intacto. A funcao existe como ponto unico caso
+// algum dia seja preciso normalizar o box antes do <video>.
+function patchCodecAudio(init) {
+    return init;
+}
+
+function iniciarFfmpegAudio(sessao) {
+    if (!configuracao.ffmpegOk) {
+        return null;
+    }
+
+    const ffmpeg = spawn(
+        configuracao.ffmpeg,
+        argumentosFfmpegAudio(),
+        {
+            stdio: ["pipe", "pipe", "pipe"],
+            windowsHide: true
+        }
+    );
+
+    let erroStderr = "";
+
+    ffmpeg.on("error", (erro) => {
+        sessao.erroAudio = `ffmpeg audio: ${erro.message}`;
+        log(`[${sessao.id}] ERRO FFMPEG AUDIO: ${erro.message}`);
+        encerrarAudio(sessao);
+    });
+
+    ffmpeg.stderr.on("data", (dados) => {
+        const texto = String(dados).trim();
+
+        if (texto) {
+            erroStderr = texto;
+            log(`[${sessao.id}] ffmpeg audio: ${texto}`);
+        }
+    });
+
+    ffmpeg.stdout.on("data", (chunk) => consumirAudio(sessao, chunk));
+
+    ffmpeg.on("close", (codigo) => {
+        if (sessao.audioAtivo) {
+            sessao.erroAudio =
+                erroStderr || `ffmpeg audio encerrou (codigo ${codigo})`;
+
+            log(`[${sessao.id}] FFMPEG AUDIO ENCERROU: ${codigo}`);
+            encerrarAudio(sessao);
+        }
+    });
+
+    ffmpeg.stdin.on("error", () => {
+        // EPIPE quando o socket de audio cai antes; esperado.
+    });
+
+    return ffmpeg;
+}
+
+function tratarCaixaAudio(sessao, tipo, caixa) {
+    if (tipo === "ftyp") {
+        sessao.audioFtyp = Buffer.from(caixa);
+        return;
+    }
+
+    if (tipo === "moov") {
+        if (!sessao.audioFtyp) {
+            return;
+        }
+
+        const moov = patchCodecAudio(Buffer.from(caixa));
+
+        sessao.audioMoov = moov;
+        sessao.audioCodec = CODEC_AUDIO_MSE;
+        sessao.audioIni = Buffer.concat([sessao.audioFtyp, moov]);
+
+        log(`[${sessao.id}] AUDIO PRONTO ${CODEC_AUDIO_MSE}`);
+
+        // O audio ficou pronto depois de alguns clientes ja
+        // estarem conectados: manda o init de audio para quem
+        // abriu a faixa de audio e reancora.
+        for (const cliente of sessao.clientes) {
+            if (!cliente.audio || cliente.fechado) {
+                continue;
+            }
+
+            cliente.ativo = false;
+            ativarCliente(sessao, cliente);
+        }
+
+        return;
+    }
+
+    if (tipo === "moof") {
+        sessao.audioFragmento = { moof: Buffer.from(caixa), mdat: null };
+        return;
+    }
+
+    if (tipo === "mdat") {
+        if (sessao.audioFragmento) {
+            sessao.audioFragmento.mdat = Buffer.from(caixa);
+            publicarFragmentoAudio(sessao);
+        }
+    }
+}
+
+
+function consumirAudio(sessao, chunk) {
+    sessao.audioPendente = Buffer.concat([sessao.audioPendente, chunk]);
+
+    while (sessao.audioPendente.length >= 8) {
+        const tamanho = sessao.audioPendente.readUInt32BE(0);
+
+        if (tamanho < 8 || tamanho > MAX_CAIXA_BYTES) {
+            // Stream corrompido: descarta o buffer para nao
+            // travar a sessao inteira.
+            sessao.audioPendente = Buffer.alloc(0);
+            return;
+        }
+
+        if (sessao.audioPendente.length < tamanho) {
+            return;
+        }
+
+        const caixa = sessao.audioPendente.subarray(0, tamanho);
+        const tipo = caixa.toString("latin1", 4, 8);
+
+        sessao.audioPendente = sessao.audioPendente.subarray(tamanho);
+
+        tratarCaixaAudio(sessao, tipo, caixa);
+    }
+}
+
+function publicarFragmentoAudio(sessao) {
+    const frag = sessao.audioFragmento;
+
+    if (!frag || !frag.mdat) {
+        return;
+    }
+
+    const fragmento = Buffer.concat([frag.moof, frag.mdat]);
+
+    sessao.audioFragmento = null;
+    sessao.audioUltimoFragmento = fragmento;
+    sessao.audioBytes = (sessao.audioBytes || 0) + fragmento.length;
+
+    for (const cliente of sessao.clientes) {
+        if (cliente.fechado) {
+            sessao.clientes.delete(cliente);
+            continue;
+        }
+
+        if (!cliente.audio) {
+            continue;
+        }
+
+        if (cliente.ativo) {
+            escrever(cliente, fragmento);
+        }
+    }
+}
+
+function encerrarAudio(sessao) {
+    sessao.audioAtivo = false;
+
+    if (sessao.socketAudio && !sessao.socketAudio.destroyed) {
+        sessao.socketAudio.destroy();
+        sessao.socketAudio = null;
+    }
+
+    if (sessao.ffmpegAudio && !sessao.ffmpegAudio.killed) {
+        try {
+            sessao.ffmpegAudio.kill();
+        } catch (erro) {
+            // Ja morreu.
+        }
+    }
+
+    sessao.ffmpegAudio = null;
+    sessao.audioPendente = Buffer.alloc(0);
+    sessao.audioFragmento = null;
+}
+
+function iniciarSessaoAudio(socket, id, nome, transporte, restante) {
+    const sessao = sessoes.get(id);
+
+    if (!sessao || !sessao.ativo) {
+        // Audio chegou antes do video (ou o video ja caiu):
+        // fecha para o Android reconectar depois.
+        log(`[${id}] AUDIO SEM VIDEO - descartando conexao`);
+        socket.destroy();
+        return;
+    }
+
+    if (sessao.audioAtivo) {
+        encerrarAudio(sessao);
+    }
+
+    sessao.socketAudio = socket;
+    sessao.audioAtivo = true;
+    sessao.audioFtyp = null;
+    sessao.audioMoov = null;
+    sessao.audioIni = null;
+    sessao.audioPendente = Buffer.alloc(0);
+    sessao.audioFragmento = null;
+    sessao.ffmpegAudio = iniciarFfmpegAudio(sessao);
+
+    if (restante && restante.length && sessao.ffmpegAudio) {
+        sessao.ffmpegAudio.stdin.write(restante);
+    }
+
+    socket.on("data", (chunk) => {
+        if (!sessao.ffmpegAudio || !sessao.ffmpegAudio.stdin.writable) {
+            return;
+        }
+
+        try {
+            sessao.ffmpegAudio.stdin.write(chunk);
+        } catch (erro) {
+            // Backpressure no pipe: descarta o chunk de audio em
+            // vez de acumular latencia. O video nao e afetado.
+        }
+    });
+
+    socket.on("close", () => {
+        log(`[${id}] AUDIO DESCONECTOU`);
+        encerrarAudio(sessao);
+    });
+
+    socket.on("error", (erro) => {
+        log(`[${id}] ERRO AUDIO: ${erro.message}`);
+        encerrarAudio(sessao);
+    });
+
+    log(`[${id}] AUDIO CONECTADO (${transporte})`);
+}
+
+// ------------------------------------------------------------
 // SESSOES
 // ------------------------------------------------------------
 
@@ -471,6 +778,7 @@ function encerrarSessao(sessao, motivo) {
     sessao.erro = sessao.erro || motivo || null;
 
     encerrarClientes(sessao);
+    encerrarAudio(sessao);
 
     avisarControle(sessao, false);
 
@@ -521,7 +829,20 @@ function iniciarSessao(socket, id, nome, transporte, restante) {
         ultimoFragmento: null,
         pendente: Buffer.alloc(0),
         clientes: new Set(),
-        ffmpeg: null
+        ffmpeg: null,
+        // Estado do audio (celular -> PC). Vazio ate o socket 5054
+        // se conectar; o video funciona sem audio.
+        socketAudio: null,
+        ffmpegAudio: null,
+        audioAtivo: false,
+        audioFtyp: null,
+        audioMoov: null,
+        audioIni: null,
+        audioCodec: null,
+        audioPendente: Buffer.alloc(0),
+        audioFragmento: null,
+        audioUltimoFragmento: null,
+        audioBytes: 0
     };
 
     sessoes.set(id, sessao);
@@ -593,8 +914,13 @@ function idLegado(socket) {
     return `legacy-${ip}`;
 }
 
-function tratarConexao(socket) {
+function tratarConexao(socket, servico) {
     socket.setNoDelay(true);
+
+    // O mesmo tratador e usado para o socket de video (5051) e o
+    // de audio (5054). O parametro servico diz para qual sessao
+    // despachar depois do handshake.
+    const audio = servico === "audio";
 
     let buffer = Buffer.alloc(0);
     let decidido = false;
@@ -615,7 +941,7 @@ function tratarConexao(socket) {
             return true;
         }
 
-        if (pareceH264(buffer)) {
+        if (!audio && pareceH264(buffer)) {
             decidido = true;
             clearTimeout(timer);
 
@@ -662,7 +988,11 @@ function tratarConexao(socket) {
 
             socket.removeAllListeners("data");
 
-            iniciarSessao(socket, id, nome, transporte, restante);
+            if (audio) {
+                iniciarSessaoAudio(socket, id, nome, transporte, restante);
+            } else {
+                iniciarSessao(socket, id, nome, transporte, restante);
+            }
 
             socket.resume();
 
@@ -725,6 +1055,9 @@ function infoSessao(sessao) {
         altura: sessao.altura,
         clientes: sessao.clientes.size,
         bytes: sessao.bytes,
+        audio: sessao.audioAtivo,
+        audioCodec: sessao.audioAtivo ? sessao.audioCodec : null,
+        audioBytes: sessao.audioBytes,
         ffmpeg: Boolean(configuracao.ffmpegOk),
         iniciadoEm: sessao.iniciadoEm
     };
@@ -757,6 +1090,7 @@ function tratarHttp(req, res) {
             ffmpegOk: configuracao.ffmpegOk,
             sessoes: sessoes.size,
             portaVideo: PORTA_VIDEO,
+            portaAudio: PORTA_AUDIO,
             portaStream: PORTA_STREAM
         });
     }
@@ -795,7 +1129,24 @@ function tratarHttp(req, res) {
             });
         }
 
-        return aceitarCliente(sessao, req, res);
+        return aceitarCliente(sessao, req, res, "video");
+    }
+
+    // Faixa de audio (AAC) servida em endpoint proprio: o
+    // <video> cria um segundo SourceBuffer alimentado por aqui.
+    if (partes[0] === "audio") {
+        const id = decodeURIComponent(partes[1] || "");
+        const sessao = sessoes.get(id);
+
+        if (!sessao || !sessao.ativo || !sessao.audioAtivo) {
+            return responderJson(res, 404, {
+                ok: false,
+                ativo: false,
+                erro: "sem audio"
+            });
+        }
+
+        return aceitarCliente(sessao, req, res, "audio");
     }
 
     return responderJson(res, 404, { ok: false });
@@ -815,6 +1166,24 @@ function abrirVideo() {
             servidorVideo.removeListener("error", reject);
 
             log(`H264 aguardando na porta ${PORTA_VIDEO}`);
+
+            resolve();
+        });
+    });
+}
+
+function abrirAudio() {
+    return new Promise((resolve, reject) => {
+        servidorAudio = net.createServer((socket) =>
+            tratarConexao(socket, "audio")
+        );
+
+        servidorAudio.once("error", reject);
+
+        servidorAudio.listen(PORTA_AUDIO, "0.0.0.0", () => {
+            servidorAudio.removeListener("error", reject);
+
+            log(`AAC aguardando na porta ${PORTA_AUDIO}`);
 
             resolve();
         });
@@ -850,6 +1219,7 @@ async function iniciar(opcoes = {}) {
     };
 
     await abrirVideo();
+    await abrirAudio();
     await abrirStream();
 
     // Se o servidor de controle reiniciar, ele volta a saber
@@ -904,6 +1274,11 @@ function fechar() {
         servidorVideo = null;
     }
 
+    if (servidorAudio) {
+        servidorAudio.close();
+        servidorAudio = null;
+    }
+
     if (servidorStream) {
         servidorStream.close();
         servidorStream = null;
@@ -918,6 +1293,7 @@ const api = {
     sessoes,
     portas: {
         video: PORTA_VIDEO,
+        audio: PORTA_AUDIO,
         stream: PORTA_STREAM
     },
     info(id) {

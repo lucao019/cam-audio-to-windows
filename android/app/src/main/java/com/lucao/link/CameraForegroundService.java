@@ -122,6 +122,7 @@ public class CameraForegroundService extends Service
     // salvo (pcHost), preenchido pela MainActivity/companion.
     private static final String USB_HOST = "127.0.0.1";
     private static final int VIDEO_PORT = 5051;
+    private static final int AUDIO_PORT = 5054;
     private static final int CONTROL_PORT = 5050;
 
     // Descoberta na LAN: o celular faz broadcast e o servidor do PC

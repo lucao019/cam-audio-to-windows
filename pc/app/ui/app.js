@@ -29,12 +29,15 @@
         hudBuf: document.getElementById("hudBuf"),
         hudRes: document.getElementById("hudRes"),
         hudCodec: document.getElementById("hudCodec"),
+        hudMic: document.getElementById("hudMic"),
+        hudMicSep: document.getElementById("hudMicSep"),
         zoom: document.getElementById("zoom"),
         zoomValor: document.getElementById("zoomValor"),
         zoomMin: document.getElementById("zoomMin"),
         zoomMax: document.getElementById("zoomMax"),
         btnLente: document.getElementById("btnLente"),
         btnFlash: document.getElementById("btnFlash"),
+        btnMic: document.getElementById("btnMic"),
         btnWebcam: document.getElementById("btnWebcam"),
         btnReconectar: document.getElementById("btnReconectar"),
         btnTela: document.getElementById("btnTela"),
@@ -56,7 +59,13 @@
     let semCodecDesde = 0;
     let timerReconexao = null;
 
-    // Estado do pipeline MSE.
+    // Estado do alto-falante do PC (o mic do celular continua
+    // capturando; isto só silencia a reproducao local).
+    let micMudo = false;
+
+    // Estado do pipeline MSE. O video e o audio (opcional) usam o
+    // mesmo MediaSource mas SourceBuffers separados, alimentados por
+    // dois HTTP streams independentes (/stream e /audio).
     const player = {
         id: null,
         geracao: null,
@@ -71,7 +80,15 @@
         tocando: false,
         posicionado: false,
         ultimoDado: 0,
-        ultimoPedidoReconexao: 0
+        ultimoPedidoReconexao: 0,
+        // Audio
+        audio: false,
+        audioCodec: null,
+        sba: null,
+        filaAudio: [],
+        readerAudio: null,
+        abortAudio: null,
+        audioTocando: false
     };
 
     // ------------------------------------------------------------
@@ -156,6 +173,22 @@
             }
         }
 
+        if (player.abortAudio) {
+            try {
+                player.abortAudio.abort();
+            } catch (erro) {
+                // Ignora.
+            }
+        }
+
+        if (player.readerAudio) {
+            try {
+                player.readerAudio.cancel().catch(() => {});
+            } catch (erro) {
+                // Ignora.
+            }
+        }
+
         if (player.ms && player.ms.readyState === "open") {
             try {
                 player.ms.endOfStream();
@@ -189,10 +222,19 @@
         player.posicionado = false;
         player.ultimoDado = 0;
         player.ultimoPedidoReconexao = 0;
+        player.audio = false;
+        player.audioCodec = null;
+        player.sba = null;
+        player.filaAudio = [];
+        player.readerAudio = null;
+        player.abortAudio = null;
+        player.audioTocando = false;
 
         el.hud.hidden = true;
         el.hudDireita.hidden = true;
         el.hudBuf.textContent = "buf --";
+        el.hudMic.hidden = true;
+        el.hudMicSep.hidden = true;
 
         definirTagVideo("is-off", "video off");
 
@@ -266,6 +308,161 @@
         // Depois do append, garante que o player esta dentro do
         // trecho que existe no buffer (ao vivo).
         setTimeout(alinharAoVivo, 0);
+    }
+
+    // ------------------------------------------------------------
+    // Audio (segundo SourceBuffer, endpoint /audio)
+    // ------------------------------------------------------------
+
+    function limparBufferAudio() {
+        const sba = player.sba;
+
+        if (!sba || sba.updating || !sba.buffered.length) {
+            return;
+        }
+
+        const inicio = sba.buffered.start(0);
+        const atual = el.video.currentTime;
+        const alvo = atual - 0.4;
+
+        if (alvo > inicio + 0.1) {
+            try {
+                sba.remove(inicio, alvo);
+            } catch (erro) {
+                // Ignora.
+            }
+        }
+    }
+
+    function bombearAudio() {
+        const sba = player.sba;
+
+        if (
+            !sba ||
+            sba.updating ||
+            !player.filaAudio.length ||
+            !player.ms ||
+            player.ms.readyState !== "open"
+        ) {
+            return;
+        }
+
+        let total = 0;
+        const partes = [];
+
+        while (player.filaAudio.length && total < 128 * 1024) {
+            const parte = player.filaAudio.shift();
+
+            partes.push(parte);
+            total += parte.length;
+        }
+
+        const dados = juntar(partes);
+
+        try {
+            sba.appendBuffer(dados);
+        } catch (erro) {
+            if (erro.name === "QuotaExceededError") {
+                // Fila de audio cheia: descarta o que esta pendente
+                // em vez de derrubar o video. O proximo init do
+                // servidor reancora a trilha.
+                player.filaAudio = [];
+                return;
+            }
+
+            console.warn(`audio: ${erro.message}`);
+        }
+    }
+
+    // Alimenta o SourceBuffer de audio a partir de /audio/:id. E
+    // independente do stream de video: se o audio cair, o video
+    // segue; se o video cair, o abort do audio vem em pararVideo().
+    async function conectarAudio(id, token) {
+        const controle = new AbortController();
+
+        player.abortAudio = controle;
+
+        try {
+            const resposta = await fetch(
+                `${STREAM}/audio/${encodeURIComponent(id)}` +
+                    `?g=${player.geracao}`,
+                {
+                    signal: controle.signal,
+                    cache: "no-store"
+                }
+            );
+
+            if (token !== player.token) {
+                return;
+            }
+
+            if (!resposta.ok || !resposta.body) {
+                // Sem audio agora (celular pode ligar o mic depois).
+                return;
+            }
+
+            const reader = resposta.body.getReader();
+
+            player.readerAudio = reader;
+
+            while (true) {
+                const { done, value } = await reader.read();
+
+                if (token !== player.token) {
+                    return;
+                }
+
+                if (done) {
+                    break;
+                }
+
+                if (value && value.length) {
+                    player.filaAudio.push(value);
+                    bombearAudio();
+                }
+            }
+        } catch (erro) {
+            if (token !== player.token || erro.name === "AbortError") {
+                return;
+            }
+
+            console.warn("audio:", erro.message);
+        }
+    }
+
+    function iniciarAudio(id, codec) {
+        const mime = `audio/mp4; codecs="${codec}"`;
+
+        if (!window.MediaSource || !MediaSource.isTypeSupported(mime)) {
+            console.warn(`audio nao suportado: ${mime}`);
+            return;
+        }
+
+        let sba;
+
+        try {
+            sba = player.ms.addSourceBuffer(mime);
+        } catch (erro) {
+            console.warn(`audio buffer: ${erro.message}`);
+            return;
+        }
+
+        sba.mode = "segments";
+
+        player.audio = true;
+        player.audioCodec = codec;
+        player.sba = sba;
+
+        sba.addEventListener("updateend", () => {
+            bombearAudio();
+            limparBufferAudio();
+        });
+
+        sba.addEventListener("error", () => {
+            console.warn("erro no SourceBuffer de audio");
+        });
+
+        conectarAudio(id, player.token);
     }
 
     // Mantem o player no fim do buffer. Um stream que comeca no
@@ -416,6 +613,9 @@
         player.geracao = info.geracao;
         player.codec = info.codec;
 
+        // Aplica o mute escolhido pelo usuario a nova sessao.
+        el.video.muted = micMudo;
+
         el.hudNome.textContent = info.nome || id;
         el.hudRes.textContent = info.largura
             ? `${info.largura}x${info.altura}`
@@ -486,6 +686,14 @@
                 sb.addEventListener("error", () => {
                     falharVideo("erro no SourceBuffer");
                 });
+
+                // Audio no mesmo MediaSource, em SourceBuffer
+                // separado. Só entra se a sessao anunciar audio;
+                // se o celular não tiver mic ligado ainda, o vídeo
+                // segue sozinho.
+                if (info.audio && info.audioCodec) {
+                    iniciarAudio(id, info.audioCodec);
+                }
 
                 definirTagVideo("is-espera", "conectando");
 
@@ -952,9 +1160,36 @@
                 : "--";
         }
 
+        if (atual) {
+            atualizarHudMic(atual);
+        }
+
         if (atual && atual.video) {
             verificarVideo();
         }
+    }
+
+    // Mostra o estado do mic no HUD e habilita o botao de mute
+    // quando o celular publica audio.
+    function atualizarHudMic(atual) {
+        const temAudio = Boolean(atual && atual.audio && player.audio);
+
+        el.btnMic.disabled = !temAudio;
+
+        if (!temAudio) {
+            el.hudMic.hidden = true;
+            el.hudMicSep.hidden = true;
+            return;
+        }
+
+        el.hudMic.hidden = false;
+        el.hudMicSep.hidden = false;
+        el.hudMic.textContent = micMudo ? "mic mudo" : "mic on";
+        el.hudMic.classList.toggle("is-mudo", micMudo);
+
+        el.btnMic.textContent = micMudo ? "mic: off" : "mic: on";
+        el.btnMic.classList.toggle("is-danger", micMudo);
+        el.btnMic.classList.toggle("is-success", !micMudo);
     }
 
     // ------------------------------------------------------------
@@ -1075,6 +1310,13 @@
 
         atualizarControles();
         enviarFlash(aparelho.id, ligado);
+    });
+
+    // Mute local: o celular continua capturando, mas o PC nao toca.
+    el.btnMic.addEventListener("click", () => {
+        micMudo = !micMudo;
+        el.video.muted = micMudo;
+        atualizarHudMic(aparelhoSelecionado());
     });
 
     el.btnReconectar.addEventListener("click", () => {
