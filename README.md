@@ -108,14 +108,17 @@ Janela Electron  (player MSE)  <-  server.js  (:5050)  API + UI
 | 5050 | HTTP | API de controle, painel Android e UI do desktop |
 | 5051 | TCP | H.264 bruto vindo do celular |
 | 5052 | HTTP | MP4 fragmentado para o player |
+| 5053 | UDP | Descoberta do PC na rede local |
 
 ### USB vs Wi‑Fi
 
 - **USB (preferido).** O companion roda `adb reverse tcp:5050` e `tcp:5051`, então
   o celular fala com `127.0.0.1`. O túnel é revalidado a cada 10 s e restaurado
   se cair.
-- **Wi‑Fi.** O celular se conecta ao endereço do PC na LAN diretamente. Use o
-  campo `pc host` no celular se a autodetecção escolher a interface errada.
+- **Wi‑Fi automático.** Sem cabo, o celular faz broadcast UDP na LAN e o PC se
+  identifica sozinho — não é preciso digitar nada. O IP descoberto aparece no
+  campo `pc host` e pode ser editado como fallback, caso a rede bloqueie
+  broadcast entre dispositivos.
 
 A ponte aceita os dois transportes e informa qual está em uso, então alternar
 entre eles é transparente para o player.
@@ -166,7 +169,7 @@ túnel e o celular se reconecta sozinho.
 | `adb device unauthorized` | Aceite o diálogo no celular, ou rode `adb kill-server` e tente de novo |
 | Travado em `CONECTANDO` / `SEM FRAMES` | Abra a câmera no celular, ou pressione RECONECTAR |
 | `ffmpeg` aparece como ausente no rodapé | Instale o ffmpeg e coloque no `PATH` (ou `FFMPEG_PATH`) |
-| Vídeo funciona no USB mas não no Wi‑Fi | Preencha o endereço do PC no campo `pc host` |
+| Celular não acha o PC no Wi‑Fi | Confirme que os dois estão na mesma rede; aguarde ~2 s pela descoberta. Se a rede isolar clientes, digite o IP no campo `pc host` |
 | Celular sumiu após reconectar o cabo | Espere ~10 s; o companion restaura os túneis |
 
 Os logs são gravados em `%APPDATA%\LUCAO LINK\lucao-link.log`.

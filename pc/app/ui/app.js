@@ -208,7 +208,7 @@
 
         const inicio = sb.buffered.start(0);
         const atual = el.video.currentTime;
-        const alvo = atual - 4;
+        const alvo = atual - 2;
 
         if (alvo > inicio + 0.5) {
             try {
@@ -235,7 +235,7 @@
         let total = 0;
         const partes = [];
 
-        while (player.fila.length && total < 512 * 1024) {
+        while (player.fila.length && total < 128 * 1024) {
             const parte = player.fila.shift();
 
             partes.push(parte);
@@ -278,13 +278,13 @@
         const atual = el.video.currentTime;
 
         const fora = atual < inicio - 0.05 || atual > fim + 0.05;
-        const atras = fim - atual > 2.5;
+        const atras = fim - atual > 0.5;
 
         if (player.posicionado && !fora && !atras) {
             return;
         }
 
-        const alvo = Math.max(inicio + 0.05, fim - 0.3);
+        const alvo = Math.max(inicio + 0.05, fim - 0.1);
 
         player.posicionado = true;
 
@@ -467,7 +467,7 @@
 
                     if (
                         sb.buffered.length &&
-                        sb.buffered.end(sb.buffered.length - 1) - atual > 12
+                        sb.buffered.end(sb.buffered.length - 1) - atual > 4
                     ) {
                         limparBuffer();
                     }

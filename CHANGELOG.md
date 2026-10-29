@@ -1,3 +1,25 @@
+## Checkpoint 30 — Descoberta automática do PC na LAN (Wi‑Fi sem digitar IP)
+
+### Adicionado
+
+- Descoberta do PC por UDP na porta 5053: o celular faz broadcast de `LUCAO?1`, o PC responde `LUCAO!1 <hostname> <ip>`.
+- `server.js`: socket UDP de descoberta (`iniciarDescoberta()`/`pararDescoberta()`), iniciado junto com o servidor HTTP e no app Electron.
+- Android (`CameraForegroundService`): thread de descoberta que sobe no `onCreate`, procura o PC ao abrir e preenche o `pc host` sozinho.
+- Host descoberto entra automaticamente na lista de candidatos, entre o USB e o `pc host` digitado manualmente.
+
+### Alterado
+
+- `candidatosHost()` passa a considerar o host descoberto na LAN antes do IP manual, então a reconexão Wi‑Fi usa o endereço achado sem intervenção.
+- Descoberta para sozinha quando o vídeo já está conectado por USB (o cabo tem prioridade) e ao destruir o serviço.
+- `README.md`: tabela de portas com a 5053/UDP, seção "USB vs Wi‑Fi" descrevendo a descoberta automática e linha de solução de problemas atualizada.
+
+### Validado
+
+```text
+PC: node -e "require('./server.js').iniciarDescoberta()" responde LUCAO!1 01lucas 192.168.2.121
+Android: gradlew.bat :app:assembleDebug --offline -> BUILD SUCCESSFUL
+```
+
 ## Checkpoint 29 — App de Desktop (janela única, sem ffplay)
 
 ### Adicionado

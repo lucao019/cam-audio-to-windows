@@ -1,4 +1,5 @@
 const express = require("express");
+const dgram = require("dgram");
 const os = require("os");
 const path = require("path");
 
@@ -11,11 +12,21 @@ const path = require("path");
 //
 // Porta 5051 (live-receiver.js):
 //   - video H.264, uma sessao por aparelho
+//
+// Porta 5053 (udp):
+//   - descoberta: o celular pergunta e este servidor responde
 // ============================================================
 
 const app = express();
 const PORT = 5050;
 const VERSAO = "29";
+
+// Descoberta na LAN: o celular faz broadcast "LUCAO?1" e o PC
+// responde "LUCAO!1 <nome> <ip>". Protocolo em texto simples para
+// nao precisar de dependencia nova nos dois lados.
+const PORTA_DESCOBERTA = 5053;
+const PING_DESCOBERTA = "LUCAO?1";
+const NOME_PC = os.hostname() || "pc";
 
 app.use(express.json({ limit: "64kb" }));
 
@@ -619,12 +630,74 @@ function painel() {
 }
 
 // ------------------------------------------------------------
+// DESCOBERTA (UDP)
+// ------------------------------------------------------------
+
+let socketDescoberta = null;
+
+/**
+ * Responde aos broadcasts de descoberta do app Android.
+ * Reutilizavel: chamar duas vezes devolve o mesmo socket.
+ */
+function iniciarDescoberta(porta = PORTA_DESCOBERTA) {
+    if (socketDescoberta) {
+        return socketDescoberta;
+    }
+
+    const socket = dgram.createSocket({ type: "udp4", reuseAddr: true });
+
+    socket.on("message", (mensagem, origem) => {
+        const texto = mensagem.toString("utf8").trim();
+
+        if (texto !== PING_DESCOBERTA) {
+            return;
+        }
+
+        const resposta = Buffer.from(
+            `LUCAO!1 ${NOME_PC} ${HOST}`,
+            "utf8"
+        );
+
+        socket.send(resposta, origem.port, origem.address, (erro) => {
+            if (erro) {
+                console.error(
+                    `Descoberta: falha ao responder ${origem.address}: ${erro.message}`
+                );
+            }
+        });
+    });
+
+    socket.on("error", (erro) => {
+        console.error(`Descoberta: ${erro.message}`);
+        socket.close();
+        socketDescoberta = null;
+    });
+
+    socket.bind(porta, () => {
+        socket.setBroadcast(true);
+    });
+
+    socketDescoberta = socket;
+
+    return socket;
+}
+
+function pararDescoberta() {
+    if (socketDescoberta) {
+        socketDescoberta.close();
+        socketDescoberta = null;
+    }
+}
+
+// ------------------------------------------------------------
 // START
 // ------------------------------------------------------------
 
 function iniciar(porta = PORT) {
     return new Promise((resolve, reject) => {
         const servidor = app.listen(porta, "0.0.0.0", () => {
+            iniciarDescoberta();
+
             console.log("");
             console.log("==============================");
             console.log("       LUCAO CAM SERVER");
@@ -633,6 +706,7 @@ function iniciar(porta = PORT) {
             console.log(`App      : http://localhost:${PORT}/app/`);
             console.log(`Controle : http://${HOST}:${PORT}/control`);
             console.log(`Video    : tcp ${HOST}:5051`);
+            console.log(`Descoberta: udp ${PORTA_DESCOBERTA}`);
             console.log("");
 
             resolve(servidor);
@@ -649,4 +723,14 @@ if (require.main === module) {
     });
 }
 
-module.exports = { app, iniciar, HOST, PORT, VERSAO };
+module.exports = {
+    app,
+    iniciar,
+    iniciarDescoberta,
+    pararDescoberta,
+    HOST,
+    PORT,
+    VERSAO,
+    PORTA_DESCOBERTA,
+    PING_DESCOBERTA,
+};

@@ -36,7 +36,11 @@ import androidx.lifecycle.LifecycleRegistry;
 
 import java.io.IOException;
 import java.io.OutputStream;
+import java.net.DatagramPacket;
+import java.net.DatagramSocket;
 import java.net.Socket;
+import java.net.SocketException;
+import java.net.SocketTimeoutException;
 import java.nio.ByteBuffer;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -90,6 +94,14 @@ public class CameraForegroundService extends Service
     private static final int VIDEO_PORT = 5051;
     private static final int CONTROL_PORT = 5050;
 
+    // Descoberta na LAN: o celular faz broadcast e o servidor do PC
+    // responde com o proprio IP. Assim o usuario nao digita nada.
+    private static final int DISCOVERY_PORT = 5053;
+    private static final String DISCOVERY_PING = "LUCAO?1";
+    private static final String DISCOVERY_RESPOSTA = "LUCAO!1";
+    private static final int DISCOVERY_TIMEOUT_MS = 1000;
+    private static final int DISCOVERY_INTERVALO_MS = 2000;
+
     // ============================================================
     // IDENTIDADE / PREFERENCIAS
     // ============================================================
@@ -102,6 +114,12 @@ public class CameraForegroundService extends Service
     private volatile String deviceId = "";
     private volatile String deviceName = "android";
     private volatile String pcHost = "";
+
+    // Preenchido pelo loop de descoberta quando o PC responde na LAN.
+    // Entra em candidatosHost() entre o USB e o pcHost manual.
+    private volatile String hostDescoberto = "";
+    private Thread threadDescoberta = null;
+    private volatile boolean descobertaAtiva = false;
 
     private volatile String hostAtivo = USB_HOST;
     private volatile String transporteAtivo = "usb";
@@ -188,111 +206,116 @@ public class CameraForegroundService extends Service
     // ============================================================
 
     @Override
-public void onCreate() {
-    super.onCreate();
+    public void onCreate() {
+        super.onCreate();
 
-    Log.i("LUCAO_SERVICE", "CameraForegroundService.onCreate()");
-
-    carregarIdentidade();
-
-listarFpsCamera();
-
-cameraExecutor =
-        Executors.newSingleThreadExecutor();
-
-    networkExecutor =
-        Executors.newFixedThreadPool(4);
-
-videoWriterExecutor =
-        Executors.newSingleThreadExecutor();
-
-    // Lifecycle usado pelo CameraX
-    lifecycleRegistry =
-            new LifecycleRegistry(this);
-
-    lifecycleRegistry.setCurrentState(
-            Lifecycle.State.CREATED
-    );
-
-    // Foreground Service precisa da notificaÃ§Ã£o
-    criarCanalNotificacao();
-
-    Notification notification =
-            new NotificationCompat.Builder(
-                    this,
-                    CHANNEL_ID
-            )
-                    .setContentTitle("LUCAO LINK")
-                    .setContentText(
-                            "Webcam conectada ao computador"
-                    )
-                    .setSmallIcon(
-                            android.R.drawable.presence_video_online
-                    )
-                    .setOngoing(true)
-                    .setPriority(
-                            NotificationCompat.PRIORITY_LOW
-                    )
-                    .build();
-
-    startForeground(
-            NOTIFICATION_ID,
-            notification
-    );
-
-    // Agora o Service estÃ¡ ativo para o CameraX
-    lifecycleRegistry.setCurrentState(
-            Lifecycle.State.STARTED
-    );
-
-// TCP + encoder rodam fora da main thread
-networkExecutor.execute(() -> {
-
-    Log.i(
-            "LUCAO_SERVICE",
-            "INICIANDO PIPELINE"
-    );
-
-    conectarVideoTcp();
-
-    if (videoOutput == null) {
-
-        Log.w(
+        Log.i(
                 "LUCAO_SERVICE",
-                "TCP 5051 INDISPONIVEL - AGUARDANDO PC"
+                "CameraForegroundService.onCreate()"
         );
 
-        iniciarReconexaoVideo();
+        carregarIdentidade();
 
-    } else {
+        iniciarDescoberta();
 
-        pcConectado = true;
-        broadcastStatus();
-    }
+        listarFpsCamera();
 
-    prepararEncoderH264();
-    iniciarPollingControle();
-    iniciarEnvioStatus();
+        cameraExecutor =
+                Executors.newSingleThreadExecutor();
 
-    Log.i(
-            "LUCAO_SERVICE",
-            "SOLICITANDO INICIO DA CAMERA"
-    );
+        networkExecutor =
+                Executors.newFixedThreadPool(4);
 
-    ContextCompat
-            .getMainExecutor(this)
-            .execute(() -> {
+        videoWriterExecutor =
+                Executors.newSingleThreadExecutor();
 
-                Log.i(
+        // Lifecycle usado pelo CameraX
+        lifecycleRegistry =
+                new LifecycleRegistry(this);
+
+        lifecycleRegistry.setCurrentState(
+                Lifecycle.State.CREATED
+        );
+
+        // Foreground Service precisa da notificacao
+        criarCanalNotificacao();
+
+        Notification notification =
+                new NotificationCompat.Builder(
+                        this,
+                        CHANNEL_ID
+                )
+                        .setContentTitle("LUCAO LINK")
+                        .setContentText(
+                                "Webcam conectada ao computador"
+                        )
+                        .setSmallIcon(
+                                android.R.drawable.presence_video_online
+                        )
+                        .setOngoing(true)
+                        .setPriority(
+                                NotificationCompat.PRIORITY_LOW
+                        )
+                        .build();
+
+        startForeground(
+                NOTIFICATION_ID,
+                notification
+        );
+
+        // Agora o Service esta ativo para o CameraX
+        lifecycleRegistry.setCurrentState(
+                Lifecycle.State.STARTED
+        );
+
+        // TCP + encoder rodam fora da main thread
+        networkExecutor.execute(() -> {
+
+            Log.i(
+                    "LUCAO_SERVICE",
+                    "INICIANDO PIPELINE"
+            );
+
+            conectarVideoTcp();
+
+            if (videoOutput == null) {
+
+                Log.w(
                         "LUCAO_SERVICE",
-                        "EXECUTANDO iniciarCamera() NA MAIN THREAD"
+                        "TCP 5051 INDISPONIVEL - AGUARDANDO PC"
                 );
 
-                iniciarCamera();
-            });
-});
+                iniciarReconexaoVideo();
 
-}
+            } else {
+
+                pcConectado = true;
+                broadcastStatus();
+            }
+
+            prepararEncoderH264();
+            iniciarPollingControle();
+            iniciarEnvioStatus();
+
+            Log.i(
+                    "LUCAO_SERVICE",
+                    "SOLICITANDO INICIO DA CAMERA"
+            );
+
+            ContextCompat
+                    .getMainExecutor(this)
+                    .execute(() -> {
+
+                        Log.i(
+                                "LUCAO_SERVICE",
+                                "EXECUTANDO iniciarCamera() NA MAIN THREAD"
+                        );
+
+                        iniciarCamera();
+                    });
+        });
+
+    }
 
 
     // ============================================================
@@ -648,15 +671,191 @@ private void iniciarReconexaoVideo() {
                 "\n";
     }
 
+    // ============================================================
+    // DESCOBERTA NA LAN (UDP)
+    // ============================================================
+
+    /**
+     * Sobe o loop de descoberta. Se o USB ja resolver, o loop
+     * para sozinho; senao ele segue tentando ate achar o PC.
+     */
+    private void iniciarDescoberta() {
+
+        if (descobertaAtiva) {
+            return;
+        }
+
+        descobertaAtiva = true;
+
+        threadDescoberta = new Thread(() -> {
+
+            while (descobertaAtiva) {
+
+                // USB ativo dispensa a busca
+                if (pcConectado && USB_HOST.equals(hostAtivo)) {
+                    break;
+                }
+
+                String achado = procurarPc();
+
+                if (achado != null && !achado.isEmpty()) {
+
+                    Log.i(
+                            "LUCAO_SERVICE",
+                            "PC DESCOBERTO NA LAN: " + achado
+                    );
+
+                    hostDescoberto = achado;
+
+                    // Reflete no campo editavel como fallback
+                    pcHost = achado;
+
+                    getSharedPreferences(PREFS, MODE_PRIVATE)
+                            .edit()
+                            .putString(PREF_PC_HOST, achado)
+                            .apply();
+
+                    // Sem USB, a proxima tentativa de reconexao
+                    // ja usa o host descoberto.
+                    if (videoOutput == null) {
+                        iniciarReconexaoVideo();
+                    }
+
+                    break;
+                }
+
+                dormir(DISCOVERY_INTERVALO_MS);
+            }
+
+            descobertaAtiva = false;
+        });
+
+        threadDescoberta.setDaemon(true);
+        threadDescoberta.start();
+    }
+
+    private void pararDescoberta() {
+
+        descobertaAtiva = false;
+
+        if (threadDescoberta != null) {
+            threadDescoberta.interrupt();
+            threadDescoberta = null;
+        }
+    }
+
+    /**
+     * Envia o broadcast e espera a resposta do PC.
+     * Devolve o IP informado ou "" se ninguem responder.
+     */
+    private String procurarPc() {
+
+        DatagramSocket socket = null;
+
+        try {
+
+            socket = new DatagramSocket();
+            socket.setBroadcast(true);
+            socket.setSoTimeout(DISCOVERY_TIMEOUT_MS);
+
+            byte[] ping = DISCOVERY_PING.getBytes("UTF-8");
+
+            DatagramPacket pacote = new DatagramPacket(
+                    ping,
+                    ping.length,
+                    InetAddress.getByName("255.255.255.255"),
+                    DISCOVERY_PORT
+            );
+
+            socket.send(pacote);
+
+            byte[] buffer = new byte[256];
+
+            DatagramPacket resposta = new DatagramPacket(
+                    buffer,
+                    buffer.length
+            );
+
+            socket.receive(resposta);
+
+            String texto = new String(
+                    resposta.getData(),
+                    0,
+                    resposta.getLength(),
+                    "UTF-8"
+            ).trim();
+
+            String[] partes = texto.split("\\s+");
+
+            // Formato esperado: LUCAO!1 <nome> <ip>
+            if (partes.length >= 3 &&
+                    DISCOVERY_RESPOSTA.equals(partes[0])) {
+
+                return partes[partes.length - 1];
+            }
+
+            return "";
+
+        } catch (SocketTimeoutException e) {
+
+            // Timeout e o caso normal quando o PC ainda nao subiu
+            return "";
+
+        } catch (SocketException e) {
+
+            // receive() estoura SocketException quando o socket e
+            // fechado. Preserva o flag de interrupcao para o loop
+            // encerrar sem esperar o proximo ciclo.
+            if (Thread.interrupted()) {
+                Thread.currentThread().interrupt();
+            }
+
+            return "";
+
+        } catch (Exception e) {
+
+            Log.w(
+                    "LUCAO_SERVICE",
+                    "Falha na descoberta UDP: " + e
+            );
+
+            return "";
+
+        } finally {
+
+            if (socket != null) {
+                socket.close();
+            }
+        }
+    }
+
+    private void dormir(long ms) {
+
+        try {
+            Thread.sleep(ms);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
     /**
      * USB (127.0.0.1 via ADB reverse) tem prioridade; depois o
-     * host Wi-Fi informado pela MainActivity/companion.
+     * host descoberto na LAN e, por fim, o host Wi-Fi informado
+     * pela MainActivity/companion.
      */
     private List<String> candidatosHost() {
 
         List<String> lista = new ArrayList<>();
 
         lista.add(USB_HOST);
+
+        String descoberto = hostDescoberto == null
+                ? ""
+                : hostDescoberto.trim();
+
+        if (!descoberto.isEmpty() && !lista.contains(descoberto)) {
+            lista.add(descoberto);
+        }
 
         String wifi = pcHost == null ? "" : pcHost.trim();
 
@@ -1989,6 +2188,8 @@ Log.i(
     videoWriterExecutor.shutdown();
 }
 
+        pararDescoberta();
+
         super.onDestroy();
     }
 
@@ -1998,99 +2199,99 @@ Log.i(
 
     @Nullable
     @Override
-public int onStartCommand(
-        Intent intent,
-        int flags,
-        int startId
-) {
+    public int onStartCommand(
+            Intent intent,
+            int flags,
+            int startId
+    ) {
 
-    if (intent != null) {
+        if (intent != null) {
 
-        String action = intent.getAction();
+            String action = intent.getAction();
 
-        if (ACTION_SET_ZOOM.equals(action)) {
+            if (ACTION_SET_ZOOM.equals(action)) {
 
-            float zoom =
-                    intent.getFloatExtra(
-                            "zoom",
-                            0.0f
-                    );
+                float zoom =
+                        intent.getFloatExtra(
+                                "zoom",
+                                0.0f
+                        );
 
-            zoom = Math.max(
-                    0.0f,
-                    Math.min(1.0f, zoom)
-            );
-
-            aplicarZoomCamera(zoom);
-
-        } else if (ACTION_SET_CAMERA_ACTIVE.equals(action)) {
-
-            boolean ativo =
-                    intent.getBooleanExtra(
-                            "ativo",
-                            true
-                    );
-
-            definirWebcamAtiva(ativo);
-
-        } else if (ACTION_SET_HOST.equals(action)) {
-
-            String host =
-                    intent.getStringExtra("host");
-
-            if (host != null) {
-
-                host = host.trim();
-
-                pcHost = host;
-
-                getSharedPreferences(PREFS, MODE_PRIVATE)
-                        .edit()
-                        .putString(PREF_PC_HOST, host)
-                        .apply();
-
-                Log.i(
-                        "LUCAO_CONTROL",
-                        "PC HOST DEFINIDO: " + host
+                zoom = Math.max(
+                        0.0f,
+                        Math.min(1.0f, zoom)
                 );
 
-                // Sem USB, a proxima tentativa de reconexao
-                // ja usa o novo host.
-                if (videoOutput == null) {
-                    iniciarReconexaoVideo();
+                aplicarZoomCamera(zoom);
+
+            } else if (ACTION_SET_CAMERA_ACTIVE.equals(action)) {
+
+                boolean ativo =
+                        intent.getBooleanExtra(
+                                "ativo",
+                                true
+                        );
+
+                definirWebcamAtiva(ativo);
+
+            } else if (ACTION_SET_HOST.equals(action)) {
+
+                String host =
+                        intent.getStringExtra("host");
+
+                if (host != null) {
+
+                    host = host.trim();
+
+                    pcHost = host;
+
+                    getSharedPreferences(PREFS, MODE_PRIVATE)
+                            .edit()
+                            .putString(PREF_PC_HOST, host)
+                            .apply();
+
+                    Log.i(
+                            "LUCAO_CONTROL",
+                            "PC HOST DEFINIDO: " + host
+                    );
+
+                    // Sem USB, a proxima tentativa de reconexao
+                    // ja usa o novo host.
+                    if (videoOutput == null) {
+                        iniciarReconexaoVideo();
+                    }
                 }
+
+            } else if (ACTION_START_CAMERA.equals(action)) {
+
+                // Permissao de camera acabou de ser concedida
+                // (ou a Activity quer reiniciar a camera).
+                ContextCompat
+                        .getMainExecutor(this)
+                        .execute(this::iniciarCamera);
+
+            } else if (ACTION_REQUEST_STATUS.equals(action)) {
+
+                broadcastStatus();
             }
-
-        } else if (ACTION_START_CAMERA.equals(action)) {
-
-            // Permissao de camera acabou de ser concedida
-            // (ou a Activity quer reiniciar a camera).
-            ContextCompat
-                    .getMainExecutor(this)
-                    .execute(this::iniciarCamera);
-
-        } else if (ACTION_REQUEST_STATUS.equals(action)) {
-
-            broadcastStatus();
         }
+
+        return START_STICKY;
     }
 
-    return START_STICKY;
-}
+    // ============================================================
+    // BINDER
+    // ============================================================
 
-// ============================================================
-// BINDER
-// ============================================================
+    @Nullable
+    @Override
+    public IBinder onBind(
+            Intent intent
+    ) {
+        return null;
+    }
 
-@Nullable
-@Override
-public IBinder onBind(
-        Intent intent
-) {
-    return null;
-}
-
-// ============================================================
+    // ============================================================
     // POLLING DE CONTROLE (HTTP 5050)
     // ============================================================
 
