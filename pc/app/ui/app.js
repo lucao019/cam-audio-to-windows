@@ -33,6 +33,8 @@
         zoomValor: document.getElementById("zoomValor"),
         zoomMin: document.getElementById("zoomMin"),
         zoomMax: document.getElementById("zoomMax"),
+        btnLente: document.getElementById("btnLente"),
+        btnFlash: document.getElementById("btnFlash"),
         btnWebcam: document.getElementById("btnWebcam"),
         btnReconectar: document.getElementById("btnReconectar"),
         btnTela: document.getElementById("btnTela"),
@@ -208,9 +210,12 @@
 
         const inicio = sb.buffered.start(0);
         const atual = el.video.currentTime;
-        const alvo = atual - 2;
+        // Guarda so ~0.2s de historia atras do playhead: o suficiente
+        // para o MSE nao travar por seek fora do buffer e pequeno o
+        // bastante para manter o atraso baixo.
+        const alvo = atual - 0.2;
 
-        if (alvo > inicio + 0.5) {
+        if (alvo > inicio + 0.1) {
             try {
                 sb.remove(inicio, alvo);
             } catch (erro) {
@@ -277,18 +282,23 @@
         const fim = sb.buffered.end(sb.buffered.length - 1);
         const atual = el.video.currentTime;
 
-        const fora = atual < inicio - 0.05 || atual > fim + 0.05;
-        const atras = fim - atual > 0.5;
+        const fora = atual < inicio - 0.02 || atual > fim + 0.02;
+        // Ao vivo: se estiver mais de 0.05s atras do fim do buffer,
+        // pula para a borda. Segurar um buffer maior era a causa do
+        // atraso percebido de 2-3s no LAN; manter so ~1 frame
+        // (~33ms) na frente do playhead e o minimo que ainda evita
+        // micro-travadas quando o jitter da rede passa de 1 frame.
+        const atras = fim - atual > 0.05;
 
         if (player.posicionado && !fora && !atras) {
             return;
         }
 
-        const alvo = Math.max(inicio + 0.05, fim - 0.1);
+        const alvo = Math.max(inicio + 0.02, fim - 0.033);
 
         player.posicionado = true;
 
-        if (Math.abs(alvo - atual) > 0.15) {
+        if (Math.abs(alvo - atual) > 0.05) {
             try {
                 el.video.currentTime = alvo;
             } catch (erro) {
@@ -467,7 +477,7 @@
 
                     if (
                         sb.buffered.length &&
-                        sb.buffered.end(sb.buffered.length - 1) - atual > 4
+                        sb.buffered.end(sb.buffered.length - 1) - atual > 1
                     ) {
                         limparBuffer();
                     }
@@ -624,6 +634,30 @@
         }
     }
 
+    async function enviarLente(id, valor) {
+        try {
+            await fetch(`/api/devices/${encodeURIComponent(id)}/lente`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ valor })
+            });
+        } catch (erro) {
+            console.warn("lente:", erro.message);
+        }
+    }
+
+    async function enviarFlash(id, ligado) {
+        try {
+            await fetch(`/api/devices/${encodeURIComponent(id)}/flash`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ ligado })
+            });
+        } catch (erro) {
+            console.warn("flash:", erro.message);
+        }
+    }
+
     async function enviarWebcam(id, ligada) {
         try {
             await fetch(`/api/devices/${encodeURIComponent(id)}/webcam`, {
@@ -634,6 +668,18 @@
         } catch (erro) {
             console.warn("webcam:", erro.message);
         }
+    }
+
+    const NOME_LENTE = { back: "traseira", front: "frontal" };
+
+    function atualizarLente(aparelho, lentes) {
+        const atual = lentes.includes(aparelho.lente)
+            ? aparelho.lente
+            : (lentes[0] || "");
+
+        el.btnLente.textContent = "lente: " + (atual
+            ? (NOME_LENTE[atual] || atual)
+            : "--");
     }
 
     function atualizarControles() {
@@ -648,10 +694,24 @@
         el.btnTela.disabled = !aparelho;
         el.btnWebcam.disabled = !aparelho || !aparelho.online;
 
+        const lentes = (aparelho && Array.isArray(aparelho.lentesDisponiveis))
+            ? aparelho.lentesDisponiveis
+            : [];
+
+        el.btnLente.disabled = !aparelho || !aparelho.online || lentes.length < 2;
+
+        el.btnFlash.disabled =
+            !aparelho ||
+            !aparelho.online ||
+            !aparelho.flashDisponivel;
+
         if (!aparelho) {
             el.zoomValor.textContent = "1.0x";
             el.zoomMin.textContent = "1.0x";
             el.zoomMax.textContent = "1.0x";
+            el.btnLente.textContent = "lente: --";
+            el.btnFlash.textContent = "flash: --";
+            el.btnFlash.classList.remove("is-success", "is-danger");
             el.btnWebcam.textContent = "webcam: --";
             el.btnWebcam.classList.remove("is-success", "is-danger");
             return;
@@ -672,12 +732,21 @@
         el.zoomMin.textContent = Number(aparelho.zoomMin || 1).toFixed(1) + "x";
         el.zoomMax.textContent = Number(max).toFixed(1) + "x";
 
+        atualizarLente(aparelho, lentes);
+
         el.btnWebcam.textContent = aparelho.webcam
             ? "webcam: on"
             : "webcam: off";
 
         el.btnWebcam.classList.toggle("is-success", Boolean(aparelho.webcam));
         el.btnWebcam.classList.toggle("is-danger", !aparelho.webcam);
+
+        el.btnFlash.textContent = aparelho.flash
+            ? "flash: on"
+            : "flash: off";
+
+        el.btnFlash.classList.toggle("is-success", Boolean(aparelho.flash));
+        el.btnFlash.classList.toggle("is-danger", !aparelho.flash);
     }
 
     // ------------------------------------------------------------
@@ -911,6 +980,13 @@
         }
     });
 
+    // Decoder sem dados: em vez de esperar o buffer antigo ser
+    // drenado (o que aumenta o atraso), busca a borda ao vivo assim
+    // que o player volta a ter o que tocar.
+    el.video.addEventListener("stalled", () => {
+        setTimeout(alinharAoVivo, 0);
+    });
+
     el.zoom.addEventListener("input", () => {
         const aparelho = aparelhoSelecionado();
 
@@ -959,6 +1035,46 @@
 
         atualizarControles();
         enviarWebcam(aparelho.id, ligada);
+    });
+
+    el.btnLente.addEventListener("click", () => {
+        const aparelho = aparelhoSelecionado();
+
+        if (!aparelho) {
+            return;
+        }
+
+        const lentes = Array.isArray(aparelho.lentesDisponiveis)
+            ? aparelho.lentesDisponiveis
+            : [];
+
+        if (lentes.length < 2) {
+            return;
+        }
+
+        // "clicou virou": alterna para a proxima lente da lista.
+        const atual = lentes.indexOf(aparelho.lente);
+        const valor = lentes[(atual + 1) % lentes.length];
+
+        aparelho.lente = valor;
+
+        atualizarLente(aparelho, lentes);
+        enviarLente(aparelho.id, valor);
+    });
+
+    el.btnFlash.addEventListener("click", () => {
+        const aparelho = aparelhoSelecionado();
+
+        if (!aparelho) {
+            return;
+        }
+
+        const ligado = !aparelho.flash;
+
+        aparelho.flash = ligado;
+
+        atualizarControles();
+        enviarFlash(aparelho.id, ligado);
     });
 
     el.btnReconectar.addEventListener("click", () => {
@@ -1095,7 +1211,7 @@
             "buf " + Math.max(0, fim - atual).toFixed(1) + "s";
 
         alinharAoVivo();
-    }, 1000);
+    }, 400);
 
     carregarInfo();
     atualizar();

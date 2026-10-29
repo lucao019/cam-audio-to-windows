@@ -1,3 +1,26 @@
+## Checkpoint 31 — Seleção de lente (traseira/frontal), flash e menos delay
+
+### Adicionado
+
+- Escolha da lente no app do PC: seletor `traseira`/`frontal` ao lado do zoom, habilitado só quando o aparelho expõe as duas.
+- Android (`CameraForegroundService`): detecção das lentes via `CameraCharacteristics.LENS_FACING`, `trocarLente()` com `unbindAll()` + rebind do `CameraSelector`, persistência em prefs e comando remoto `lente`.
+- Android: controle de flash pelo app do PC (`comando remoto flash`), com o toggle refletindo o estado real da lanterna.
+- `server.js`: campos `lente`/`lentesDisponiveis` no status do aparelho e endpoint `POST /api/devices/:id/lente`.
+- UI (`pc/app/ui`): `atualizarLente()`/`enviarLente()` e o elemento `#lente`.
+- `server.js`: `VERSAO` sincronizada com o checkpoint (estava em "29").
+
+### Alterado
+
+- Delay do vídeo próximo de tempo real:
+  - Android: `KEY_I_FRAME_INTERVAL` de 1s para 0 (all-intra). O PC só fecha fragmento fMP4 em keyframe, então o pior caso de espera era ~1s.
+  - Android: fila de escrita TCP limitada (~4 frames) com descarte do frame mais antigo — sob Wi-Fi lento o vídeo pula frames em vez de acumular atraso.
+  - Android: pedido de keyframe forçado (`PARAMETER_KEY_REQUEST_SYNC_FRAME`) ao trocar de lente, ao reconectar e sempre que a fila descarta, evitando imagem preta até o próximo I-frame.
+- Estado de vídeo mais próximo do ao vivo: alinhamento na borda com tolerância de 0.15s, poda do buffer em 1s e retenção de apenas 0.5s de histórico atrás do playhead.
+- Tratamento de `stalled` e verificação de borda a cada 400ms para recuperar travamentos sem acumular atraso.
+- `video-bridge.js`: fMP4 fragmentado a cada ~100ms (`-frag_duration 100000`) em vez de um fragmento por keyframe, reduzindo o atraso percebido.
+
+---
+
 ## Checkpoint 30 — Descoberta automática do PC na LAN (Wi‑Fi sem digitar IP)
 
 ### Adicionado

@@ -85,6 +85,10 @@ function iniciarFfplay(id, nome, transporte) {
             "-fflags", "nobuffer",
             "-flags", "low_delay",
             "-framedrop",
+            // -sync ext: sincroniza pelo relogio externo e DESCARTA
+            // frames atrasados em vez de acumular atraso. Sem isso o
+            // ffplay segura ~1s de buffer de video.
+            "-sync", "ext",
             "-analyzeduration", "0",
             "-probesize", "32",
             "-framerate", "30",
@@ -128,6 +132,8 @@ function encerrarSessao(id, motivo) {
     }
 
     if (sessao.ffplay && !sessao.ffplay.killed) {
+        // killed evita que o handler de "close" abra algo de novo.
+        sessao.ffplay.killed = true;
         sessao.ffplay.kill();
     }
 
@@ -194,7 +200,16 @@ function iniciarSessao(socket, id, nome, transporte, restante) {
 
     ffplay.on("close", (code) => {
         console.log(`[${id}] FFPLAY ENCERRADO: ${code}`);
-        encerrarSessao(id, "ffplay encerrado");
+
+        // Fechar a JANELA do ffplay nao pode derrubar a sessao:
+        // se derrubasse, o android veria o socket cair, reconectaria
+        // e abriria OUTRO ffplay -> loop infinito de janelas.
+        // A sessao so acaba quando o socket cai.
+        const sessao = sessoes.get(id);
+
+        if (sessao && sessao.ffplay === ffplay) {
+            sessao.ffplay = null;
+        }
     });
 }
 

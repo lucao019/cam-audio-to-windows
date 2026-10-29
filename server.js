@@ -19,7 +19,7 @@ const path = require("path");
 
 const app = express();
 const PORT = 5050;
-const VERSAO = "29";
+const VERSAO = "31";
 
 // Descoberta na LAN: o celular faz broadcast "LUCAO?1" e o PC
 // responde "LUCAO!1 <nome> <ip>". Protocolo em texto simples para
@@ -89,6 +89,10 @@ function obterAparelho(id) {
             zoomMin: 1,
             zoomMax: 1,
             webcam: true,
+            lente: "back",
+            lentesDisponiveis: ["back"],
+            flash: false,
+            flashDisponivel: false,
             ultimoContato: 0,
             comandos: [],
             criadoEm: Date.now()
@@ -131,6 +135,10 @@ function listarAparelhos() {
             zoomMin: aparelho.zoomMin,
             zoomMax: aparelho.zoomMax,
             webcam: aparelho.webcam,
+            lente: aparelho.lente,
+            lentesDisponiveis: aparelho.lentesDisponiveis,
+            flash: aparelho.flash,
+            flashDisponivel: aparelho.flashDisponivel,
             ultimoContato: aparelho.ultimoContato,
             online: agora - aparelho.ultimoContato < ONLINE_MS
         });
@@ -179,6 +187,27 @@ app.post("/api/status", (req, res) => {
 
     if (typeof corpo.webcam === "boolean") {
         aparelho.webcam = corpo.webcam;
+    }
+
+    if (typeof corpo.lente === "string" && corpo.lente) {
+        aparelho.lente = corpo.lente;
+    }
+
+    if (Array.isArray(corpo.lentesDisponiveis)) {
+        aparelho.lentesDisponiveis = corpo.lentesDisponiveis
+            .filter((l) => l === "back" || l === "front");
+
+        if (!aparelho.lentesDisponiveis.length) {
+            aparelho.lentesDisponiveis = ["back"];
+        }
+    }
+
+    if (typeof corpo.flash === "boolean") {
+        aparelho.flash = corpo.flash;
+    }
+
+    if (typeof corpo.flashDisponivel === "boolean") {
+        aparelho.flashDisponivel = corpo.flashDisponivel;
     }
 
     if (Number.isFinite(corpo.fps)) {
@@ -267,6 +296,26 @@ app.post("/api/devices/:id/webcam", (req, res) => {
     const ligada = Boolean((req.body || {}).ligada);
 
     enfileirar(req.params.id, { tipo: "webcam", ligada });
+
+    res.json({ ok: true });
+});
+
+app.post("/api/devices/:id/lente", (req, res) => {
+    const valor = String((req.body || {}).valor || "");
+
+    if (valor !== "back" && valor !== "front") {
+        return res.status(400).json({ ok: false, erro: "lente deve ser back ou front" });
+    }
+
+    enfileirar(req.params.id, { tipo: "lente", valor });
+
+    res.json({ ok: true });
+});
+
+app.post("/api/devices/:id/flash", (req, res) => {
+    const ligado = Boolean((req.body || {}).ligado);
+
+    enfileirar(req.params.id, { tipo: "flash", ligado });
 
     res.json({ ok: true });
 });

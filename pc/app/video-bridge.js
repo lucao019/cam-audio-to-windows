@@ -379,7 +379,12 @@ function argumentosFfmpeg() {
         "-an",
         "-c:v", "copy",
         "-f", "mp4",
+        // frag_keyframe sozinho so emite um fragmento por keyframe
+        // (= 1s de atraso). frag_duration 100ms fatia em ~10
+        // fragmentos/s, entao o player recebe quadros muito antes
+        // sem esperar o proximo keyframe.
         "-movflags", "frag_keyframe+empty_moov+default_base_moof",
+        "-frag_duration", "100000",
         "-flush_packets", "1",
         "pipe:1"
     ];

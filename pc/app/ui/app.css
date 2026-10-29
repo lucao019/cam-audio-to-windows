@@ -428,12 +428,22 @@ body {
 .controles {
   flex: 0 0 auto;
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) auto;
+  grid-template-columns: minmax(180px, 1fr) minmax(140px, 220px) auto;
   gap: 18px;
   align-items: center;
   border: 1px solid var(--border-color);
   padding: 10px 14px;
   background: rgba(0, 0, 0, 0.35);
+}
+
+.controle-lente {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+#btnLente {
+  width: 100%;
 }
 
 .linha-zoom {
