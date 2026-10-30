@@ -25,6 +25,7 @@ import android.media.MediaFormat;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.IBinder;
+import android.os.SystemClock;
 import android.util.Log;
 
 import androidx.annotation.Nullable;
@@ -140,6 +141,11 @@ public class CameraForegroundService extends Service
     private static final String DISCOVERY_RESPOSTA = "LUCAO!1";
     private static final int DISCOVERY_TIMEOUT_MS = 1000;
     private static final int DISCOVERY_INTERVALO_MS = 2000;
+
+    // Antiflood do broadcast de status disparado pelo observer do zoom:
+    // no maximo um POST a cada INTERVALO_ZOOM_MS.
+    private static final long INTERVALO_ZOOM_MS = 400;
+    private volatile long ultimoBroadcastZoom = 0;
 
     // ============================================================
     // IDENTIDADE / PREFERENCIAS
@@ -1950,6 +1956,13 @@ Log.i(
             );
 
             // Mantem a UI atualizada com o zoom real da camera.
+            //
+            // Cuidado: este observer dispara a CADA passo do zoom
+            // (setLinearZoom muda o ZoomState varias vezes). Se
+            // chamarmos broadcastStatus() aqui, viramos uma metralhadora
+            // de POSTs /api/status que reescreve o slider no PC e causa
+            // o "trava e pula" ao arrastar. Entao limitamos para no
+            // maximo um broadcast a cada INTERVALO_ZOOM_MS.
             cameraAtual
                     .getCameraInfo()
                     .getZoomState()
@@ -1960,6 +1973,14 @@ Log.i(
                                 if (zoomState == null) {
                                     return;
                                 }
+
+                                long agora = SystemClock.elapsedRealtime();
+
+                                if (agora - ultimoBroadcastZoom < INTERVALO_ZOOM_MS) {
+                                    return;
+                                }
+
+                                ultimoBroadcastZoom = agora;
 
                                 broadcastStatus();
                             }

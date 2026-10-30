@@ -58,6 +58,7 @@
     let selecionadoId = null;
     let arrastandoZoom = false;
     let timerZoom = null;
+    let timerFimZoom = null;
     let verificando = false;
     let semCodecDesde = 0;
     let timerReconexao = null;
@@ -1330,18 +1331,25 @@
 
     el.zoom.addEventListener("pointerdown", () => {
         arrastandoZoom = true;
+        clearTimeout(timerFimZoom);
     });
 
     el.zoom.addEventListener("pointerup", () => {
-        setTimeout(() => {
-            arrastandoZoom = false;
-        }, 350);
-
         const aparelho = aparelhoSelecionado();
 
         if (aparelho) {
             enviarZoom(aparelho.id, Number(el.zoom.value));
         }
+
+        // So largamos o "arrastando" quando o setLinearZoom da camera
+        // ja teve tempo de aplicar. Assim o status que chega durante o
+        // arrasto nao reescreve o slider (era isso que fazia ele
+        // congelar e pular). Depois liberamos e o slider volta a
+        // seguir o zoom real.
+        clearTimeout(timerFimZoom);
+        timerFimZoom = setTimeout(() => {
+            arrastandoZoom = false;
+        }, 600);
     });
 
     el.btnWebcam.addEventListener("click", () => {

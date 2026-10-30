@@ -109,6 +109,20 @@ function obterAparelho(id) {
 function enfileirar(id, comando) {
     const aparelho = obterAparelho(id);
 
+    // O zoom e um estado absoluto: se o usuario arrasta o slider, so o
+    // ULTIMO valor interessa. Em vez de enfileirar todos (o celular
+    // aplica um por poll e a camera fica "atrasada", pulando para
+    // valores velhos), substituimos o zoom pendente pelo novo.
+    if (comando.tipo === "zoom") {
+        const idx = aparelho.comandos.findIndex(c => c.tipo === "zoom");
+
+        if (idx !== -1) {
+            aparelho.comandos.splice(idx, 1, comando);
+
+            return;
+        }
+    }
+
     aparelho.comandos.push(comando);
 
     // Fila curta: slider gera varios eventos.
