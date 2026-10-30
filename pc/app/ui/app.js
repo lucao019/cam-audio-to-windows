@@ -37,6 +37,9 @@
         zoomMax: document.getElementById("zoomMax"),
         btnLente: document.getElementById("btnLente"),
         btnFlash: document.getElementById("btnFlash"),
+        btnRotacao: document.getElementById("btnRotacao"),
+        btnEspelho: document.getElementById("btnEspelho"),
+        btnAutoRotacao: document.getElementById("btnAutoRotacao"),
         btnMic: document.getElementById("btnMic"),
         btnWebcam: document.getElementById("btnWebcam"),
         btnReconectar: document.getElementById("btnReconectar"),
@@ -878,6 +881,57 @@
         }
     }
 
+    async function enviarRotacao(id, valor) {
+        try {
+            await fetch(`/api/devices/${encodeURIComponent(id)}/rotacao`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ valor })
+            });
+        } catch (erro) {
+            console.warn("rotacao:", erro.message);
+        }
+    }
+
+    async function enviarEspelho(id, ligado) {
+        try {
+            await fetch(`/api/devices/${encodeURIComponent(id)}/espelho`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ ligado })
+            });
+        } catch (erro) {
+            console.warn("espelho:", erro.message);
+        }
+    }
+
+    // Liga/desliga a auto-rotacao por sensor no celular.
+    async function enviarAutoRotacao(id, ligada) {
+        try {
+            await fetch(`/api/devices/${encodeURIComponent(id)}/auto-rotacao`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ ligada })
+            });
+        } catch (erro) {
+            console.warn("auto-rotacao:", erro.message);
+        }
+    }
+
+    // Liga/desliga a captura do microfone no celular (nao e so
+    // mute local: o celular para de gravar de verdade).
+    async function enviarMic(id, ligado) {
+        try {
+            await fetch(`/api/devices/${encodeURIComponent(id)}/mic`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ ligado })
+            });
+        } catch (erro) {
+            console.warn("mic:", erro.message);
+        }
+    }
+
     const NOME_LENTE = { back: "traseira", front: "frontal" };
 
     function atualizarLente(aparelho, lentes) {
@@ -913,6 +967,10 @@
             !aparelho.online ||
             !aparelho.flashDisponivel;
 
+        el.btnRotacao.disabled = !aparelho || !aparelho.online;
+        el.btnAutoRotacao.disabled = !aparelho || !aparelho.online;
+        el.btnEspelho.disabled = !aparelho || !aparelho.online;
+
         if (!aparelho) {
             el.zoomValor.textContent = "1.0x";
             el.zoomMin.textContent = "1.0x";
@@ -922,8 +980,30 @@
             el.btnFlash.classList.remove("is-success", "is-danger");
             el.btnWebcam.textContent = "webcam: --";
             el.btnWebcam.classList.remove("is-success", "is-danger");
+            el.btnRotacao.textContent = "girar 0°";
+            el.btnRotacao.classList.remove("is-success");
+            el.btnAutoRotacao.textContent = "auto: on";
+            el.btnAutoRotacao.classList.remove("is-success", "is-danger");
+            el.btnEspelho.textContent = "espelho: off";
+            el.btnEspelho.classList.remove("is-success", "is-danger");
             return;
         }
+
+        const rotacao = Number(aparelho.rotacao) || 0;
+
+        el.btnRotacao.textContent = "girar " + rotacao + "°";
+        el.btnRotacao.classList.toggle("is-success", rotacao !== 0);
+
+        const autoRot = aparelho.autoRotacao !== false;
+        el.btnAutoRotacao.textContent = autoRot ? "auto: on" : "auto: off";
+        el.btnAutoRotacao.classList.toggle("is-success", autoRot);
+        el.btnAutoRotacao.classList.toggle("is-danger", !autoRot);
+
+        el.btnEspelho.textContent = aparelho.espelho
+            ? "espelho: on"
+            : "espelho: off";
+        el.btnEspelho.classList.toggle("is-success", Boolean(aparelho.espelho));
+        el.btnEspelho.classList.toggle("is-danger", !aparelho.espelho);
 
         const max = aparelho.zoomMax || 1;
 
@@ -1161,6 +1241,12 @@
         }
 
         if (atual) {
+            // mic eh estado real do celular: espelha no PC.
+            if (typeof atual.mic === "boolean") {
+                micMudo = !atual.mic;
+                el.video.muted = micMudo;
+            }
+
             atualizarHudMic(atual);
         }
 
@@ -1169,8 +1255,9 @@
         }
     }
 
-    // Mostra o estado do mic no HUD e habilita o botao de mute
-    // quando o celular publica audio.
+    // Mostra o estado do mic no HUD e habilita o botao.
+    // micMudo espelha o estado real do celular (atual.mic):
+    // off = celular parou de capturar de verdade.
     function atualizarHudMic(atual) {
         const temAudio = Boolean(atual && atual.audio && player.audio);
 
@@ -1184,7 +1271,7 @@
 
         el.hudMic.hidden = false;
         el.hudMicSep.hidden = false;
-        el.hudMic.textContent = micMudo ? "mic mudo" : "mic on";
+        el.hudMic.textContent = micMudo ? "mic off" : "mic on";
         el.hudMic.classList.toggle("is-mudo", micMudo);
 
         el.btnMic.textContent = micMudo ? "mic: off" : "mic: on";
@@ -1272,6 +1359,52 @@
         enviarWebcam(aparelho.id, ligada);
     });
 
+    el.btnRotacao.addEventListener("click", () => {
+        const aparelho = aparelhoSelecionado();
+
+        if (!aparelho) {
+            return;
+        }
+
+        // "clicou virou": gira 90° por clique.
+        const rotacao = ((Number(aparelho.rotacao) || 0) + 90) % 360;
+
+        aparelho.rotacao = rotacao;
+
+        atualizarControles();
+        enviarRotacao(aparelho.id, rotacao);
+    });
+
+    el.btnAutoRotacao.addEventListener("click", () => {
+        const aparelho = aparelhoSelecionado();
+
+        if (!aparelho) {
+            return;
+        }
+
+        const ligada = aparelho.autoRotacao === false;
+
+        aparelho.autoRotacao = ligada;
+
+        atualizarControles();
+        enviarAutoRotacao(aparelho.id, ligada);
+    });
+
+    el.btnEspelho.addEventListener("click", () => {
+        const aparelho = aparelhoSelecionado();
+
+        if (!aparelho) {
+            return;
+        }
+
+        const espelhado = !aparelho.espelho;
+
+        aparelho.espelho = espelhado;
+
+        atualizarControles();
+        enviarEspelho(aparelho.id, espelhado);
+    });
+
     el.btnLente.addEventListener("click", () => {
         const aparelho = aparelhoSelecionado();
 
@@ -1312,11 +1445,26 @@
         enviarFlash(aparelho.id, ligado);
     });
 
-    // Mute local: o celular continua capturando, mas o PC nao toca.
+    // Alterna o microfone do CELULAR (captura real), nao so o
+    // mute local. O celular para/retoma a gravacao e o estado
+    // volta sincronizado pelo HUD.
     el.btnMic.addEventListener("click", () => {
-        micMudo = !micMudo;
+        const aparelho = aparelhoSelecionado();
+
+        if (!aparelho) {
+            return;
+        }
+
+        const ligado = Boolean(aparelho.mic) ? false : true;
+
+        aparelho.mic = ligado;
+        micMudo = !ligado;
+
+        // Mantem o PC tocando o audio quando o mic esta ligado.
         el.video.muted = micMudo;
-        atualizarHudMic(aparelhoSelecionado());
+
+        atualizarHudMic(aparelho);
+        enviarMic(aparelho.id, ligado);
     });
 
     el.btnReconectar.addEventListener("click", () => {

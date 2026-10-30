@@ -54,9 +54,34 @@ public class MainActivity extends AppCompatActivity {
 
     private android.widget.CheckBox webcamSwitch;
 
+    private android.widget.CheckBox microphoneSwitch;
+
+    private Button rotateButton;
+    private Button mirrorButton;
+
+    // Estado local otimista (o servico confirma via broadcast).
+    private int rotacaoLocal = 0;
+    private boolean espelhoLocal = false;
+    private boolean micLocal = true;
+
+    // Evita loop ao marcar/desmarcar o toggle via codigo.
+    private boolean sincronizandoMic = false;
+
     private EditText pcHostInput;
 
     private boolean sincronizandoWebcam = false;
+
+    // Evita o slider de zoom "saltar": enquanto o dedo esta na
+    // SeekBar, o status vindo do servico (zoom real do sensor, que
+    // muda em degraus) nao sobrescreve a posicao escolhida.
+    private boolean zoomArrastando = false;
+
+    // Debounce do zoom: agrupa varias mudancas do slider num unico
+    // comando ao servico, para nao inundar o CameraX.
+    private final android.os.Handler zoomHandler =
+            new android.os.Handler(android.os.Looper.getMainLooper());
+    private Runnable zoomEnvioPendente = null;
+    private int zoomProgressoPendente = 0;
 
     private static final String PREFS = "lucao_link";
     private static final String PREF_PC_HOST = "pcHost";
@@ -174,11 +199,73 @@ public class MainActivity extends AppCompatActivity {
 
                         // fromUser=false, entao nao gera
                         // eco de comando de volta ao servico.
-                        zoomSeekBar.setProgress(
-                                Math.round(
-                                        linear * 100
-                                )
+                        //
+                        // Se o usuario esta arrastando o slider,
+                        // NAO reposiciona: o sensor reporta o zoom
+                        // real em degraus e isso faria o botao
+                        // "saltar" para tras enquanto o dedo move.
+                        if (!zoomArrastando) {
+                            zoomSeekBar.setProgress(
+                                    Math.round(
+                                            linear * 100
+                                    )
+                            );
+                        }
+                    }
+
+                    // Sincroniza os botoes de orientacao quando o
+                    // comando partiu do painel do PC.
+                    if (intent.hasExtra("rotacao") &&
+                            rotateButton != null) {
+
+                        int rotacao =
+                                intent.getIntExtra(
+                                        "rotacao",
+                                        0
+                                );
+
+                        rotacaoLocal = rotacao;
+
+                        rotateButton.setText(
+                                "girar " + rotacao + "°"
                         );
+                    }
+
+                    if (intent.hasExtra("espelho") &&
+                            mirrorButton != null) {
+
+                        boolean espelhado =
+                                intent.getBooleanExtra(
+                                        "espelho",
+                                        false
+                                );
+
+                        espelhoLocal = espelhado;
+
+                        // "term_toggle"-like: muda o texto do botao.
+                        mirrorButton.setText(
+                                espelhado
+                                        ? "espelho ON"
+                                        : "espelho OFF"
+                        );
+                    }
+
+                    // Sincroniza o toggle do microfone (pode ter
+                    // sido ligado/desligado pelo painel do PC).
+                    if (intent.hasExtra("mic") &&
+                            microphoneSwitch != null) {
+
+                        boolean micLigado =
+                                intent.getBooleanExtra(
+                                        "mic",
+                                        true
+                                );
+
+                        micLocal = micLigado;
+
+                        sincronizandoMic = true;
+                        microphoneSwitch.setChecked(micLigado);
+                        sincronizandoMic = false;
                     }
                 }
             };
@@ -214,6 +301,34 @@ public class MainActivity extends AppCompatActivity {
                                     )
                             );
                         }
+                    }
+            );
+
+    // ============================================================
+    // PERMISSAO DE MICROFONE
+    // ============================================================
+
+    private final ActivityResultLauncher<String> audioPermissionLauncher =
+            registerForActivityResult(
+                    new ActivityResultContracts.RequestPermission(),
+                    permitido -> {
+
+                        if (!permitido) {
+
+                            statusText.setText(
+                                    "MICROFONE NAO AUTORIZADO"
+                            );
+
+                            statusText.setTextColor(
+                                    ContextCompat.getColor(
+                                            MainActivity.this,
+                                            R.color.term_danger
+                                    )
+                            );
+                        }
+
+                        // O audio sobe junto com o video dentro do
+                        // servico; nada a iniciar aqui.
                     }
             );
 
@@ -260,7 +375,44 @@ protected void onCreate(Bundle savedInstanceState) {
 
         webcamSwitch = findViewById(R.id.webcamSwitch);
 
+        microphoneSwitch = findViewById(R.id.microphoneSwitch);
+
+        rotateButton = findViewById(R.id.rotateButton);
+        mirrorButton = findViewById(R.id.mirrorButton);
+
         pcHostInput = findViewById(R.id.pcHostInput);
+
+        // ----------------------------
+        // MICROFONE (UI -> servico)
+        // ----------------------------
+
+        // O layout vinha desabilitado ("em desenvolvimento"); a
+        // captura agora liga/desliga de verdade, entao habilita.
+        microphoneSwitch.setEnabled(true);
+        microphoneSwitch.setChecked(micLocal);
+
+        microphoneSwitch.setOnCheckedChangeListener(
+                (botao, marcado) -> {
+
+                    if (sincronizandoMic) {
+                        return;
+                    }
+
+                    micLocal = marcado;
+
+                    Bundle extras = new Bundle();
+
+                    extras.putBoolean("ligado", marcado);
+
+                    enviarAcaoServico(
+                            CameraForegroundService
+                                    .ACTION_SET_MIC,
+                            extras
+                    );
+
+                    Log.i(TAG, "MIC " + (marcado ? "ON" : "OFF"));
+                }
+        );
 
         configurarHostPc();
 
@@ -284,17 +436,44 @@ protected void onCreate(Bundle savedInstanceState) {
                             return;
                         }
 
-                        Bundle extras = new Bundle();
-
-                        extras.putFloat(
-                                "zoom",
-                                progress / 100.0f
+                        // Mostra o valor na hora (feedback imediato).
+                        zoomValueText.setText(
+                                String.format(
+                                        Locale.US,
+                                        "%.1fx",
+                                        1.0f + progress / 100.0f * 9.0f
+                                )
                         );
 
-                        enviarAcaoServico(
-                                CameraForegroundService
-                                        .ACTION_SET_ZOOM,
-                                extras
+                        // Agrupa rajadas de mudancas num unico
+                        // comando (o sensor suaviza sozinho).
+                        zoomProgressoPendente = progress;
+
+                        if (zoomEnvioPendente != null) {
+                            zoomHandler.removeCallbacks(
+                                    zoomEnvioPendente
+                            );
+                        }
+
+                        zoomEnvioPendente = () -> {
+
+                            Bundle extras = new Bundle();
+
+                            extras.putFloat(
+                                    "zoom",
+                                    zoomProgressoPendente / 100.0f
+                            );
+
+                            enviarAcaoServico(
+                                    CameraForegroundService
+                                            .ACTION_SET_ZOOM,
+                                    extras
+                            );
+                        };
+
+                        zoomHandler.postDelayed(
+                                zoomEnvioPendente,
+                                60
                         );
                     }
 
@@ -302,12 +481,18 @@ protected void onCreate(Bundle savedInstanceState) {
                     public void onStartTrackingTouch(
                             SeekBar seekBar
                     ) {
+
+                        // Trava a sincronizacao status->slider
+                        // enquanto o dedo esta no controle.
+                        zoomArrastando = true;
                     }
 
                     @Override
                     public void onStopTrackingTouch(
                             SeekBar seekBar
                     ) {
+
+                        zoomArrastando = false;
                     }
                 }
         );
@@ -343,6 +528,51 @@ protected void onCreate(Bundle savedInstanceState) {
                     );
                 }
         );
+
+        // ----------------------------
+        // ORIENTACAO (UI -> servico)
+        // ----------------------------
+
+        // rotacao atual local (o servico confirma por broadcast).
+        rotateButton.setOnClickListener(v -> {
+
+            rotacaoLocal = (rotacaoLocal + 90) % 360;
+
+            rotateButton.setText("girar " + rotacaoLocal + "°");
+
+            Bundle extras = new Bundle();
+
+            extras.putInt("rotacao", rotacaoLocal);
+
+            enviarAcaoServico(
+                    CameraForegroundService
+                            .ACTION_SET_ROTACAO,
+                    extras
+            );
+
+            Log.i(TAG, "ROTACAO " + rotacaoLocal);
+        });
+
+        mirrorButton.setOnClickListener(v -> {
+
+            espelhoLocal = !espelhoLocal;
+
+            mirrorButton.setText(
+                    espelhoLocal ? "espelho ON" : "espelho OFF"
+            );
+
+            Bundle extras = new Bundle();
+
+            extras.putBoolean("espelho", espelhoLocal);
+
+            enviarAcaoServico(
+                    CameraForegroundService
+                            .ACTION_SET_ESPELHO,
+                    extras
+            );
+
+            Log.i(TAG, "ESPELHO " + espelhoLocal);
+        });
 
         // ----------------------------
         // STATUS (servico -> UI)
@@ -474,6 +704,20 @@ protected void onCreate(Bundle savedInstanceState) {
 
             cameraPermissionLauncher.launch(
                     Manifest.permission.CAMERA
+            );
+        }
+
+        // Microfone: o servico captura e envia sempre que o
+        // video estiver no ar. Pedimos aqui junto da camera.
+        if (
+                ContextCompat.checkSelfPermission(
+                        this,
+                        Manifest.permission.RECORD_AUDIO
+                ) != PackageManager.PERMISSION_GRANTED
+        ) {
+
+            audioPermissionLauncher.launch(
+                    Manifest.permission.RECORD_AUDIO
             );
         }
     }

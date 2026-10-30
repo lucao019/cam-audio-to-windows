@@ -63,6 +63,7 @@ import androidx.core.content.ContextCompat;
 import com.google.common.util.concurrent.ListenableFuture;
 
 import android.hardware.camera2.CaptureRequest;
+import android.view.OrientationEventListener;
 import androidx.camera.camera2.interop.Camera2CameraInfo;
 import androidx.camera.camera2.interop.Camera2Interop;
 import androidx.camera.camera2.interop.ExperimentalCamera2Interop;
@@ -98,6 +99,13 @@ public class CameraForegroundService extends Service
     // 1080 e o NV12 e preenchido ate 1088 em converterParaNV12().
     private static volatile int CAMERA_WIDTH = 640;
     private static volatile int CAMERA_HEIGHT = 480;
+
+    // Dimensoes efetivamente codificadas no H.264, ja com a rotacao
+    // aplicada (90/270 trocam W<->H). Em 0/180 e igual a
+    // VIDEO_WIDTH/HEIGHT. O PC descobre a resolucao pelo SPS, entao
+    // isto so precisa casar com o MediaCodec e com o frame rotacionado.
+    private static volatile int ENCODER_WIDTH = 640;
+    private static volatile int ENCODER_HEIGHT = 480;
     private volatile long ultimoAvisoResolucao = 0;
 
     // Diagnostico de geometria dos planos YUV (log uma vez).
@@ -142,6 +150,9 @@ public class CameraForegroundService extends Service
     private static final String PREF_DEVICE_NAME = "deviceName";
     private static final String PREF_PC_HOST = "pcHost";
     private static final String PREF_LENTE = "lente";
+    private static final String PREF_ROTACAO = "rotacao";
+    private static final String PREF_ESPELHO = "espelho";
+    private static final String PREF_MIC = "mic";
 
     private volatile String deviceId = "";
     private volatile String deviceName = "android";
@@ -170,6 +181,23 @@ public class CameraForegroundService extends Service
     private volatile boolean flashLigado = false;
     private volatile boolean flashDisponivel = false;
 
+    // Orientacao aplicada ao frame antes do encoder: 0, 90, 180
+    // ou 270 graus. Como convertemos o YUV na mao (sem Surface),
+    // a rotacao e feita por software em cima do buffer NV12.
+    private volatile int rotacaoGraus = 0;
+
+    // Espelho horizontal (efeito flip). Na camera frontal a imagem
+    // sai invertida em relacao ao que o usuario ve no celular; isso
+    // corrige sem depender da orientacao da lente.
+    private volatile boolean espelhado = false;
+
+    // Auto-rotacao: quando ligada, a orientacao fisica do celular
+    // (sensor) define rotacaoGraus; o botao manual "girar" fica para
+    // ajuste fino e nao e sobrescrito enquanto o celular nao girar.
+    private volatile boolean autoRotacao = true;
+    private OrientationEventListener orientationListener = null;
+    private int ultimaOrientacaoSensor = -1;
+
     // ============================================================
     // ACOES DE CONTROLE (recebidas da MainActivity)
     // ============================================================
@@ -186,8 +214,20 @@ public class CameraForegroundService extends Service
             "com.lucao.link.ACTION_SET_HOST";
     public static final String ACTION_SET_LENTE =
             "com.lucao.link.ACTION_SET_LENTE";
+    public static final String ACTION_SET_ROTACAO =
+            "com.lucao.link.ACTION_SET_ROTACAO";
+    public static final String ACTION_SET_ESPELHO =
+            "com.lucao.link.ACTION_SET_ESPELHO";
+    public static final String ACTION_SET_MIC =
+            "com.lucao.link.ACTION_SET_MIC";
+
+    // Detecta a orientacao FISICA do celular (sensor) e ajusta a
+    // rotacao do frame automaticamente, como no painel do PC.
+    public static final String ACTION_SET_AUTO_ROTACAO =
+            "com.lucao.link.ACTION_SET_AUTO_ROTACAO";
 
     // Broadcast de status enviado de volta para a UI
+
     public static final String ACTION_STATUS =
             "com.lucao.link.ACTION_STATUS";
 
@@ -202,6 +242,49 @@ public class CameraForegroundService extends Service
 
     private volatile Socket videoSocket;
     private volatile OutputStream videoOutput;
+
+    // ============================================================
+    // AUDIO (microfone do celular -> PC)
+    // ============================================================
+    //
+    // O PC (video-bridge.js, porta AUDIO_PORT) espera, depois do
+    // mesmo handshake do video ("LUCAO/1 <id> <nome> <transporte>\n"),
+    // um fluxo ADTS AAC cru. So aceita se ja houver sessao de video
+    // ativa com o MESMO deviceId; por isso o audio so conecta com o
+    // video ja conectado (ver conectarAudioTcp()).
+
+    private static final int AUDIO_SAMPLE_RATE = 44100;
+    private static final int AUDIO_CHANNELS = 1;
+    private static final int AUDIO_BITRATE = 128_000;
+
+    private volatile Socket audioSocket;
+    private volatile OutputStream audioOutput;
+
+    private volatile android.media.AudioRecord audioRecord;
+    private volatile MediaCodec aacEncoder;
+
+    private Thread audioCaptureThread;
+    private Thread audioWriterThread;
+
+    // Fila de PCM bruto (leitura do AudioRecord -> encoder) e fila
+    // de AAC embrulhado em ADTS (encoder -> socket). Ambas limitadas:
+    // se o link engasgar, descarta o bloco mais antigo em vez de
+    // acumular atraso, igual ao writer de video.
+    private static final int AUDIO_QUEUE_MAX = 32;
+    private java.util.concurrent.ArrayBlockingQueue<byte[]>
+            audioPcmQueue;
+    private java.util.concurrent.ArrayBlockingQueue<byte[]>
+            audioWriteQueue;
+    private volatile boolean audioAtivo = false;
+    private volatile boolean audioWriterAtivo = false;
+
+    // Intencao do usuario: liga/desliga a captura do microfone.
+    // Quando false, iniciarAudio() vira no-op e a captura fica
+    // liberada (o Android para de mostrar o mic em uso).
+    private volatile boolean micLigado = true;
+
+    private final java.util.concurrent.atomic.AtomicBoolean reconectandoAudio =
+        new java.util.concurrent.atomic.AtomicBoolean(false);
 
     // ============================================================
     // EXECUTORES
@@ -357,6 +440,7 @@ public class CameraForegroundService extends Service
             prepararEncoderH264();
             iniciarPollingControle();
             iniciarEnvioStatus();
+            iniciarAutoRotacao();
 
             Log.i(
                     "LUCAO_SERVICE",
@@ -556,6 +640,9 @@ private void iniciarReconexaoVideo() {
 
     broadcastStatus();
 
+    // Sobe (ou reergue) o audio junto com o video.
+    iniciarAudio();
+
     Log.i(
             "LUCAO_TCP",
             "VIDEO TCP RECONECTADO - KEYFRAME PENDENTE"
@@ -643,6 +730,9 @@ private void iniciarReconexaoVideo() {
 
                 broadcastStatus();
 
+                // Com o video no ar, o PC aceita a sessao de audio.
+                iniciarAudio();
+
                 return;
 
             } catch (Exception e) {
@@ -708,6 +798,21 @@ private void iniciarReconexaoVideo() {
         String lente = prefs.getString(PREF_LENTE, "back");
 
         lenteAtual = "front".equals(lente) ? "front" : "back";
+
+        // Orientacao persistida: sobrevive ao reinicio do servico.
+        int rotacaoSalva = prefs.getInt(PREF_ROTACAO, 0);
+
+        rotacaoGraus =
+                (rotacaoSalva == 90 ||
+                        rotacaoSalva == 180 ||
+                        rotacaoSalva == 270)
+                        ? rotacaoSalva
+                        : 0;
+
+        espelhado = prefs.getBoolean(PREF_ESPELHO, false);
+
+        // Microfone: o usuario escolhe on/off; padrao ligado.
+        micLigado = prefs.getBoolean(PREF_MIC, true);
     }
 
     /**
@@ -1074,6 +1179,10 @@ private void iniciarReconexaoVideo() {
             json.put("lente", lenteAtual);
             json.put("flash", flashLigado);
             json.put("flashDisponivel", flashDisponivel);
+            json.put("rotacao", rotacaoGraus);
+            json.put("espelho", espelhado);
+            json.put("mic", micLigado);
+            json.put("autoRotacao", autoRotacao);
 
             JSONArray lentes = new JSONArray();
 
@@ -1229,6 +1338,11 @@ private void iniciarReconexaoVideo() {
     intent.putExtra("webcam", cameraAtiva);
     intent.putExtra("transporte", transporteAtivo);
     intent.putExtra("host", hostAtivo);
+    intent.putExtra("lente", lenteAtual);
+    intent.putExtra("rotacao", rotacaoGraus);
+    intent.putExtra("espelho", espelhado);
+    intent.putExtra("mic", micLigado);
+    intent.putExtra("autoRotacao", autoRotacao);
 
     Camera camera = cameraAtual;
 
@@ -1542,6 +1656,8 @@ private void resolverMaiorResolucao(
         // guard descartar ~24 de 30 frames/s -> travava em 6 FPS.
         CAMERA_WIDTH = maior.getWidth();
         CAMERA_HEIGHT = maior.getHeight();
+
+        atualizarDimensoesEncoder();
 
         Log.i(
                 "LUCAO_CAMERA",
@@ -1890,6 +2006,24 @@ Log.i(
     }
 }
     // ============================================================
+    // DIMENSOES DO ENCODER (VIDEO_* + ROTACAO)
+    // ============================================================
+
+    // Recalcula ENCODER_WIDTH/HEIGHT a partir da geometria do NV12
+    // (VIDEO_*) e da rotacao atual. Em 90/270 as dimensoes trocam.
+    // Chamado sempre que a resolucao OU a rotacao mudam; quem chama
+    // deve recriar o encoder depois.
+    private void atualizarDimensoesEncoder() {
+
+        boolean trocaDimensoes =
+                rotacaoGraus == 90 ||
+                rotacaoGraus == 270;
+
+        ENCODER_WIDTH = trocaDimensoes ? VIDEO_HEIGHT : VIDEO_WIDTH;
+        ENCODER_HEIGHT = trocaDimensoes ? VIDEO_WIDTH : VIDEO_HEIGHT;
+    }
+
+    // ============================================================
     // YUV_420_888 -> NV12
     // ============================================================
 
@@ -1960,7 +2094,23 @@ Log.i(
                         width
                 );
 
-                pos += width;
+                // O buffer usa encWidth como stride de LINHA (nao
+                // apenas no padding, tambem entre as linhas da
+                // camera). Se a camera entregar uma largura que nao
+                // seja multiplo de 16 (ex.: 854), encWidth=864 e o
+                // luma precisa ser "aberto" para esse stride; caso
+                // contrario a rotacao/espelho le linhas desalinhadas
+                // e o chroma sai do offset errado.
+                if (encWidth != width) {
+                    java.util.Arrays.fill(
+                            nv12,
+                            pos + width,
+                            pos + encWidth,
+                            (byte) 0
+                    );
+                }
+
+                pos += encWidth;
             }
 
         } else {
@@ -1984,6 +2134,18 @@ Log.i(
                                     col * yPixelStride
                             );
                 }
+
+                // Mesmo motivo do caminho rapido: abre para encWidth.
+                if (encWidth != width) {
+                    java.util.Arrays.fill(
+                            nv12,
+                            pos,
+                            pos + (encWidth - width),
+                            (byte) 0
+                    );
+                }
+
+                pos += encWidth - width;
             }
         }
 
@@ -1996,10 +2158,7 @@ Log.i(
         if (encHeight > height) {
 
             int inicioUltimaLinha =
-                    (height - 1) * width;
-
-            int fimUltimaLinha =
-                    inicioUltimaLinha + width;
+                    (height - 1) * encWidth;
 
             for (
                     int row = height;
@@ -2008,19 +2167,20 @@ Log.i(
             ) {
 
                 int destino =
-                        row * width;
+                        row * encWidth;
 
                 System.arraycopy(
                         nv12,
                         inicioUltimaLinha,
                         nv12,
                         destino,
-                        width
+                        encWidth
                 );
             }
-
-            pos = encHeight * width;
         }
+
+        // O chroma comeca logo apos o plano Y completo.
+        pos = encHeight * encWidth;
 
         // ----------------------------
         // UV
@@ -2135,10 +2295,10 @@ Log.i(
             // buffer reaproveitado. De ~1M chamadas para 540 copias.
             if (
                     linhasUv == null ||
-                    linhasUv.length < width
+                    linhasUv.length < encWidth
             ) {
                 linhasUv =
-                        new byte[width];
+                        new byte[encWidth];
             }
 
             for (
@@ -2181,16 +2341,27 @@ Log.i(
                     );
                 }
 
+                // Corpo do chroma (width bytes) + colspan neutro ate
+                // o stride de linha do encoder (encWidth).
+                if (encWidth > width) {
+                    java.util.Arrays.fill(
+                            linhasUv,
+                            width,
+                            encWidth,
+                            (byte) 0
+                    );
+                }
+
                 // U0 V0 U1 V1 ... == ordem que o NV12 espera.
                 System.arraycopy(
                         linhasUv,
                         0,
                         nv12,
                         pos,
-                        width
+                        encWidth
                 );
 
-                pos += width;
+                pos += encWidth;
             }
 
         } else {
@@ -2221,6 +2392,16 @@ Log.i(
                                     col * vPixelStride
                             );
                 }
+
+                // Mesmo motivo: completa a linha ate encWidth.
+                java.util.Arrays.fill(
+                        nv12,
+                        pos,
+                        pos + (encWidth - width),
+                        (byte) 0
+                );
+
+                pos += encWidth - width;
             }
         }
 
@@ -2234,8 +2415,8 @@ Log.i(
         if (uvEncHeight > uvAltura) {
 
             int inicioUltimaLinhaUV =
-                    encHeight * width +
-                    (uvAltura - 1) * width;
+                    encHeight * encWidth +
+                    (uvAltura - 1) * encWidth;
 
             for (
                     int row = uvAltura;
@@ -2244,20 +2425,222 @@ Log.i(
             ) {
 
                 int destino =
-                        encHeight * width +
-                        row * width;
+                        encHeight * encWidth +
+                        row * encWidth;
 
                 System.arraycopy(
                         nv12,
                         inicioUltimaLinhaUV,
                         nv12,
                         destino,
-                        width
+                        encWidth
                 );
             }
         }
 
         return nv12;
+    }
+
+    // ============================================================
+    // ORIENTACAO (ROTACAO + ESPELHO) DO NV12
+    // ============================================================
+    //
+    // A CameraX entrega o YUV sempre no referencial do sensor. O
+    // usuario quer ver a imagem "em pe" no PC, entao rotacionamos
+    // o NV12 por software antes do encoder.
+    //
+    // largura/altura sao as dimensoes de ENTRADA (as da camera).
+    // O retorno tem dimensoes efetivas: 90/270 trocam W<->H. Quem
+    // chama deve usar as dimensoes efetivas para o encoder.
+    //
+    // NV12 = plano Y (w*h) seguido de plano UV intercalado
+    // (U0 V0 U1 V1 ...) com (w/2)*(h/2) pares. Como U e V andam
+    // sempre juntos, tratamos o chroma como uma "amostra" de 2
+    // bytes por pixel de chroma, o que mantem o espelhamento e a
+    // rotacao do chroma alinhados ao luma sem casos especiais.
+
+    private static final class OrientedFrame {
+        final byte[] dados;
+        final int largura;
+        final int altura;
+
+        OrientedFrame(
+                byte[] dados,
+                int largura,
+                int altura
+        ) {
+            this.dados = dados;
+            this.largura = largura;
+            this.altura = altura;
+        }
+    }
+
+    private OrientedFrame aplicarOrientacaoNv12(
+            byte[] origem,
+            int largura,
+            int altura,
+            int rotacao,
+            boolean espelhar
+    ) {
+
+        // Sem transformacao: devolve o mesmo buffer (zero copia).
+        if (rotacao == 0 && !espelhar) {
+            return new OrientedFrame(
+                    origem,
+                    largura,
+                    altura
+            );
+        }
+
+        int larguraEfetiva =
+                (rotacao == 90 || rotacao == 270)
+                        ? altura
+                        : largura;
+
+        int alturaEfetiva =
+                (rotacao == 90 || rotacao == 270)
+                        ? largura
+                        : altura;
+
+        byte[] destino =
+                new byte[
+                        larguraEfetiva *
+                        alturaEfetiva *
+                        3 / 2
+                ];
+
+        // --- LUMA ---
+        for (
+                int linha = 0;
+                linha < alturaEfetiva;
+                linha++
+        ) {
+
+            for (
+                    int coluna = 0;
+                    coluna < larguraEfetiva;
+                    coluna++
+            ) {
+
+                // Posicao correspondente na imagem de origem
+                // (fonte) para cada pixel de destino.
+                int linhaOrigem;
+                int colunaOrigem;
+
+                switch (rotacao) {
+
+                    case 90:
+                        // Rotaciona 90 graus no sentido horario.
+                        linhaOrigem = largura - 1 - coluna;
+                        colunaOrigem = linha;
+                        break;
+
+                    case 180:
+                        linhaOrigem = altura - 1 - linha;
+                        colunaOrigem = largura - 1 - coluna;
+                        break;
+
+                    case 270:
+                        // Rotaciona 90 graus no sentido anti-horario.
+                        linhaOrigem = coluna;
+                        colunaOrigem = altura - 1 - linha;
+                        break;
+
+                    default:
+                        linhaOrigem = linha;
+                        colunaOrigem = coluna;
+                        break;
+                }
+
+                if (espelhar) {
+                    colunaOrigem =
+                            largura - 1 - colunaOrigem;
+                }
+
+                destino[linha * larguraEfetiva + coluna] =
+                        origem[
+                                linhaOrigem * largura +
+                                colunaOrigem
+                        ];
+            }
+        }
+
+        // --- CHROMA (pares U,V andam juntos) ---
+        int larguraChroma = largura / 2;
+        int alturaChroma = altura / 2;
+        int larguraChromaEfetiva = larguraEfetiva / 2;
+        int alturaChromaEfetiva = alturaEfetiva / 2;
+
+        int offsetOrigemChroma = largura * altura;
+        int offsetDestinoChroma =
+                larguraEfetiva * alturaEfetiva;
+
+        for (
+                int linha = 0;
+                linha < alturaChromaEfetiva;
+                linha++
+        ) {
+
+            for (
+                    int coluna = 0;
+                    coluna < larguraChromaEfetiva;
+                    coluna++
+            ) {
+
+                int linhaOrigem;
+                int colunaOrigem;
+
+                switch (rotacao) {
+
+                    case 90:
+                        linhaOrigem = larguraChroma - 1 - coluna;
+                        colunaOrigem = linha;
+                        break;
+
+                    case 180:
+                        linhaOrigem = alturaChroma - 1 - linha;
+                        colunaOrigem = larguraChroma - 1 - coluna;
+                        break;
+
+                    case 270:
+                        linhaOrigem = coluna;
+                        colunaOrigem = alturaChroma - 1 - linha;
+                        break;
+
+                    default:
+                        linhaOrigem = linha;
+                        colunaOrigem = coluna;
+                        break;
+                }
+
+                if (espelhar) {
+                    colunaOrigem =
+                            larguraChroma - 1 - colunaOrigem;
+                }
+
+                int idxOrigem =
+                        offsetOrigemChroma +
+                        (linhaOrigem * larguraChroma +
+                                colunaOrigem) * 2;
+
+                int idxDestino =
+                        offsetDestinoChroma +
+                        (linha * larguraChromaEfetiva +
+                                coluna) * 2;
+
+                destino[idxDestino] =
+                        origem[idxOrigem];
+
+                destino[idxDestino + 1] =
+                        origem[idxOrigem + 1];
+            }
+        }
+
+        return new OrientedFrame(
+                destino,
+                larguraEfetiva,
+                alturaEfetiva
+        );
     }
 
     // ============================================================
@@ -2355,12 +2738,23 @@ Log.i(
 
             // Aprende e recria o encoder nesta resolucao. As duas
             // dimensoes viram multiplo de 16 (exigencia do AVC).
+            //
+            // VIDEO_WIDTH/HEIGHT = geometria do NV12 (referencial da
+            // CAMERA, sem rotacao). E o que converterParaNV12() usa
+            // para montar o buffer. Nao muda com a rotacao.
+            //
+            // ENCODER_WIDTH/HEIGHT = o que sai de fato no H.264, ja
+            // com a rotacao aplicada (90/270 trocam W<->H). E o que
+            // o MediaCodec recebe. O PC le a resolucao do proprio
+            // SPS, entao nao ha nada a avisar do outro lado.
             resolucaoRealLargura = larguraFrame;
             resolucaoRealAltura = alturaFrame;
             CAMERA_WIDTH = larguraFrame;
             CAMERA_HEIGHT = alturaFrame;
             VIDEO_WIDTH = arredondarPara16(larguraFrame);
             VIDEO_HEIGHT = arredondarPara16(alturaFrame);
+
+            atualizarDimensoesEncoder();
 
             recriarEncoderH264();
 
@@ -2388,10 +2782,31 @@ Log.i(
 
             if (inputIndex >= 0) {
 
-                byte[] nv12 =
+                byte[] nv12Cru =
                         converterParaNV12(
                                 image
                         );
+
+                // Aplica rotacao/espelho (software, sobre o NV12).
+                // Com 0 graus e sem espelho isso e identidade.
+                //
+                // A geometria passada e a do BUFFER NV12
+                // (VIDEO_WIDTH x VIDEO_HEIGHT), nao a da camera crua:
+                // o converter preenche a ultima linha ate fechar o
+                // multiplo de 16 e poe o chroma logo apos
+                // (VIDEO_HEIGHT*VIDEO_WIDTH). Passar larguraFrame com
+                // alturaFrame menor faria o chroma ser lido do offset
+                // errado.
+                OrientedFrame orientado =
+                        aplicarOrientacaoNv12(
+                                nv12Cru,
+                                VIDEO_WIDTH,
+                                VIDEO_HEIGHT,
+                                rotacaoGraus,
+                                espelhado
+                        );
+
+                byte[] nv12 = orientado.dados;
 
                 ByteBuffer inputBuffer =
                         codec.getInputBuffer(
@@ -2766,11 +3181,14 @@ Log.i(
 
         try {
 
+            // O encoder recebe o frame JA com rotacao/espelho
+            // aplicados, entao usa ENCODER_* (que troca W<->H em
+            // 90/270), nao a geometria do NV12 de entrada.
             MediaFormat format =
                     MediaFormat.createVideoFormat(
                             MediaFormat.MIMETYPE_VIDEO_AVC,
-                            VIDEO_WIDTH,
-                            VIDEO_HEIGHT
+                            ENCODER_WIDTH,
+                            ENCODER_HEIGHT
                     );
 
             format.setInteger(
@@ -2842,10 +3260,17 @@ Log.i(
             Log.i(
                     "LUCAO_H264",
                     "ENCODER INICIADO: " +
+                            ENCODER_WIDTH +
+                            "x" +
+                            ENCODER_HEIGHT +
+                            " (entrada NV12 " +
                             VIDEO_WIDTH +
                             "x" +
                             VIDEO_HEIGHT +
-                            " @" +
+                            ", rotacao " +
+                            rotacaoGraus +
+                            (espelhado ? " espelhado" : "") +
+                            ") @" +
                             VIDEO_FPS +
                             " FPS / " +
                             VIDEO_BITRATE +
@@ -2938,6 +3363,10 @@ Log.i(
             networkExecutor.shutdown();
         }
         pararEscritorVideo();
+
+        pararAudio();
+
+        pararAutoRotacao();
 
         pararDescoberta();
 
@@ -3044,6 +3473,596 @@ Log.i(
     }
 
     // ============================================================
+    // AUDIO (MICROFONE -> PC, ADTS AAC NA PORTA AUDIO_PORT)
+    // ============================================================
+    //
+    // Fluxo:
+    //   AudioRecord (PCM16 mono) -> encoder AAC -> frames ADTS -> socket
+    //
+    // O PC so aceita o audio se ja tiver a sessao de video ativa com
+    // o MESMO deviceId. Por isso conectamos sempre no hostAtivo (o
+    // host onde o video esta conectado), com o mesmo transporte.
+
+    private synchronized void conectarAudioTcp() {
+
+        if (
+                audioSocket != null &&
+                audioSocket.isConnected() &&
+                !audioSocket.isClosed()
+        ) {
+            return;
+        }
+
+        if (videoOutput == null) {
+            return; // sem video, o PC descarta o audio
+        }
+
+        String host = hostAtivo;
+
+        Socket socket = null;
+
+        try {
+
+            socket = new Socket();
+            socket.connect(
+                    new java.net.InetSocketAddress(host, AUDIO_PORT),
+                    1500
+            );
+            socket.setTcpNoDelay(true);
+
+            OutputStream output = socket.getOutputStream();
+
+            output.write(
+                    montarHandshake(host).getBytes("UTF-8")
+            );
+            output.flush();
+
+            audioSocket = socket;
+            audioOutput = output;
+
+            Log.i(
+                    "LUCAO_AUDIO",
+                    "AUDIO TCP CONECTADO: " +
+                            host +
+                            ":" +
+                            AUDIO_PORT +
+                            " " +
+                            transporteAtivo
+            );
+
+        } catch (Exception e) {
+
+            if (socket != null) {
+                try {
+                    socket.close();
+                } catch (Exception ignored) {
+                }
+            }
+
+            Log.w(
+                    "LUCAO_AUDIO",
+                    "FALHA AO CONECTAR AUDIO: " +
+                            e.getMessage()
+            );
+        }
+    }
+
+    private synchronized void desconectarAudioTcp() {
+
+        OutputStream output = audioOutput;
+        Socket socket = audioSocket;
+
+        audioOutput = null;
+        audioSocket = null;
+
+        if (output != null) {
+            try {
+                output.close();
+            } catch (Exception ignored) {
+            }
+        }
+
+        if (socket != null) {
+            try {
+                socket.close();
+            } catch (Exception ignored) {
+            }
+        }
+    }
+
+    private void iniciarReconexaoAudio() {
+
+        if (!servicoAtivo || !audioAtivo) {
+            return;
+        }
+
+        if (!reconectandoAudio.compareAndSet(false, true)) {
+            return;
+        }
+
+        ExecutorService executor = networkExecutor;
+
+        if (executor == null || executor.isShutdown()) {
+            reconectandoAudio.set(false);
+            return;
+        }
+
+        executor.execute(() -> {
+
+            try {
+
+                while (
+                        servicoAtivo &&
+                        audioAtivo &&
+                        audioOutput == null
+                ) {
+
+                    conectarAudioTcp();
+
+                    if (audioOutput != null) {
+                        break;
+                    }
+
+                    if (videoOutput == null) {
+                        // Sem video ainda: o PC descartaria o audio.
+                        // Espera a reconexao do video resolver.
+                        Log.w(
+                                "LUCAO_AUDIO",
+                                "AGUARDANDO VIDEO PARA CONECTAR AUDIO"
+                        );
+                    }
+
+                    try {
+
+                        Thread.sleep(1000);
+
+                    } catch (InterruptedException e) {
+
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                }
+
+            } finally {
+
+                reconectandoAudio.set(false);
+            }
+        });
+    }
+
+    /**
+     * Liga a captura de microfone e o envio de AAC para o PC.
+     * Deve ser chamado quando o video conecta (pcConectado=true).
+     */
+    private void iniciarAudio() {
+
+        if (audioAtivo) {
+            return;
+        }
+
+        // Se o usuario desligou o microfone, nao captura nada.
+        // Isso libera o mic no Android (icone de "em uso" some).
+        if (!micLigado) {
+            Log.i("LUCAO_AUDIO", "iniciarAudio ignorado: mic desligado");
+            return;
+        }
+
+        try {
+
+            // ----- AudioRecord (PCM16 mono) -----
+            int minBuf = android.media.AudioRecord.getMinBufferSize(
+                    AUDIO_SAMPLE_RATE,
+                    android.media.AudioFormat.CHANNEL_IN_MONO,
+                    android.media.AudioFormat.ENCODING_PCM_16BIT
+            );
+
+            if (minBuf <= 0) {
+                Log.e(
+                        "LUCAO_AUDIO",
+                        "AudioRecord buffer invalido: " + minBuf
+                );
+                return;
+            }
+
+            int bufferBytes = Math.max(minBuf, AUDIO_SAMPLE_RATE / 5 * 2);
+
+            android.media.AudioRecord record =
+                    new android.media.AudioRecord(
+                            android.media.MediaRecorder.AudioSource.VOICE_RECOGNITION,
+                            AUDIO_SAMPLE_RATE,
+                            android.media.AudioFormat.CHANNEL_IN_MONO,
+                            android.media.AudioFormat.ENCODING_PCM_16BIT,
+                            bufferBytes
+                    );
+
+            if (record.getState() != android.media.AudioRecord.STATE_INITIALIZED) {
+                Log.e(
+                        "LUCAO_AUDIO",
+                        "AudioRecord nao inicializou"
+                );
+                record.release();
+                return;
+            }
+
+            // Se o hardware nao suportar 44100, avisa (o PC assume 44100).
+            if (record.getSampleRate() != AUDIO_SAMPLE_RATE) {
+                Log.w(
+                        "LUCAO_AUDIO",
+                        "Sample rate real: " + record.getSampleRate()
+                );
+            }
+
+            // ----- Encoder AAC (ADTS) -----
+            MediaCodec encoder = MediaCodec.createEncoderByType(
+                    "audio/mp4a-latm"
+            );
+
+            android.media.MediaFormat formato =
+                    android.media.MediaFormat.createAudioFormat(
+                            "audio/mp4a-latm",
+                            AUDIO_SAMPLE_RATE,
+                            AUDIO_CHANNELS
+                    );
+
+            formato.setInteger(
+                    android.media.MediaFormat.KEY_BIT_RATE,
+                    AUDIO_BITRATE
+            );
+            formato.setInteger(
+                    android.media.MediaFormat.KEY_AAC_PROFILE,
+                    android.media.MediaCodecInfo.CodecProfileLevel.AACObjectLC
+            );
+            formato.setInteger(
+                    android.media.MediaFormat.KEY_MAX_INPUT_SIZE,
+                    16384
+            );
+
+            encoder.configure(
+                    formato,
+                    null,
+                    null,
+                    MediaCodec.CONFIGURE_FLAG_ENCODE
+            );
+            encoder.start();
+
+            audioRecord = record;
+            aacEncoder = encoder;
+
+            audioPcmQueue =
+                    new java.util.concurrent.ArrayBlockingQueue<>(AUDIO_QUEUE_MAX);
+            audioWriteQueue =
+                    new java.util.concurrent.ArrayBlockingQueue<>(AUDIO_QUEUE_MAX);
+
+            audioAtivo = true;
+            audioWriterAtivo = true;
+
+            record.startRecording();
+
+            iniciarEscritorAudio();
+            iniciarCapturaAudio();
+
+            conectarAudioTcp();
+
+            if (audioOutput == null) {
+                iniciarReconexaoAudio();
+            }
+
+            Log.i(
+                    "LUCAO_AUDIO",
+                    "CAPTURA DE AUDIO INICIADA"
+            );
+
+        } catch (Exception e) {
+
+            Log.e(
+                    "LUCAO_AUDIO",
+                    "ERRO AO INICIAR AUDIO: " + e.getMessage()
+            );
+
+            pararAudio();
+        }
+    }
+
+    private void iniciarCapturaAudio() {
+
+        audioCaptureThread = new Thread(() -> {
+
+            byte[] buf = new byte[2048];
+
+            android.media.AudioRecord record = audioRecord;
+
+            while (audioAtivo && record != null) {
+
+                final int lidos;
+
+                try {
+                    lidos = record.read(buf, 0, buf.length);
+                } catch (Exception e) {
+                    Log.e(
+                            "LUCAO_AUDIO",
+                            "ERRO NA LEITURA: " + e.getMessage()
+                    );
+                    break;
+                }
+
+                if (lidos <= 0) {
+                    continue;
+                }
+
+                byte[] bloco = new byte[lidos];
+                System.arraycopy(buf, 0, bloco, 0, lidos);
+
+                java.util.concurrent.ArrayBlockingQueue<byte[]> fila =
+                        audioPcmQueue;
+
+                if (fila == null) {
+                    break;
+                }
+
+                if (!fila.offer(bloco)) {
+                    fila.poll();       // descarta o mais antigo
+                    fila.offer(bloco);
+                }
+            }
+
+        }, "lucao-audio-capture");
+
+        audioCaptureThread.setDaemon(true);
+        audioCaptureThread.start();
+    }
+
+    private void iniciarEscritorAudio() {
+
+        audioWriterThread = new Thread(() -> {
+
+            android.media.MediaCodec.BufferInfo info =
+                    new android.media.MediaCodec.BufferInfo();
+
+            while (audioAtivo) {
+
+                MediaCodec encoder = aacEncoder;
+
+                java.util.concurrent.ArrayBlockingQueue<byte[]> fila =
+                        audioPcmQueue;
+
+                if (encoder == null || fila == null) {
+                    break;
+                }
+
+                byte[] pcm;
+
+                try {
+                    pcm = fila.take();
+                } catch (InterruptedException e) {
+                    break;
+                }
+
+                try {
+
+                    int inIndex = encoder.dequeueInputBuffer(10_000);
+
+                    if (inIndex >= 0) {
+
+                        java.nio.ByteBuffer in = encoder.getInputBuffer(inIndex);
+
+                        if (in != null) {
+                            in.clear();
+                            in.put(pcm);
+                            encoder.queueInputBuffer(
+                                    inIndex,
+                                    0,
+                                    pcm.length,
+                                    System.nanoTime() / 1000,
+                                    0
+                            );
+                        }
+                    }
+
+                    // Drena todas as saidas disponiveis.
+                    while (true) {
+
+                        int outIndex = encoder.dequeueOutputBuffer(
+                                info,
+                                0
+                        );
+
+                        if (outIndex == MediaCodec.INFO_TRY_AGAIN_LATER) {
+                            break;
+                        }
+
+                        if (outIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                            continue;
+                        }
+
+                        if (outIndex < 0) {
+                            break;
+                        }
+
+                        java.nio.ByteBuffer out =
+                                encoder.getOutputBuffer(outIndex);
+
+                        if (
+                                out != null &&
+                                info.size > 0 &&
+                                (info.flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0
+                        ) {
+
+                            byte[] aac = new byte[info.size];
+                            out.position(info.offset);
+                            out.limit(info.offset + info.size);
+                            out.get(aac);
+
+                            byte[] adts = embrulharAdts(aac, info.size);
+
+                            java.util.concurrent.ArrayBlockingQueue<byte[]> fout =
+                                    audioWriteQueue;
+
+                            if (fout != null && adts != null) {
+
+                                if (!fout.offer(adts)) {
+                                    fout.poll();
+                                    fout.offer(adts);
+                                }
+                            }
+                        }
+
+                        encoder.releaseOutputBuffer(outIndex, false);
+                    }
+
+                } catch (IllegalStateException e) {
+                    break;
+                }
+            }
+
+        }, "lucao-audio-encoder");
+
+        audioWriterThread.setDaemon(true);
+        audioWriterThread.start();
+
+        // Thread separada so para escrever no socket, para o encoder
+        // nunca bloquear no write.
+        Thread socketWriter = new Thread(() -> {
+
+            while (audioWriterAtivo) {
+
+                java.util.concurrent.ArrayBlockingQueue<byte[]> fout =
+                        audioWriteQueue;
+
+                if (fout == null) {
+                    break;
+                }
+
+                byte[] pacote;
+
+                try {
+                    pacote = fout.take();
+                } catch (InterruptedException e) {
+                    break;
+                }
+
+                OutputStream output = audioOutput;
+
+                if (output == null) {
+                    continue;
+                }
+
+                try {
+
+                    output.write(pacote);
+
+                } catch (IOException e) {
+
+                    Log.e(
+                            "LUCAO_AUDIO",
+                            "CONEXAO AUDIO PERDIDA: " + e.getMessage()
+                    );
+
+                    desconectarAudioTcp();
+                    iniciarReconexaoAudio();
+                }
+            }
+
+        }, "lucao-audio-socket-writer");
+
+        socketWriter.setDaemon(true);
+        socketWriter.start();
+    }
+
+    // Embrulha um frame AAC cru num header ADTS de 7 bytes, que e o
+    // formato que o ffmpeg do PC (-f aac) espera receber.
+    private byte[] embrulharAdts(byte[] aac, int tamanho) {
+
+        int frameLen = tamanho + 7;
+
+        byte[] adts = new byte[frameLen];
+
+        // syncword 0xFFF (12 bits)
+        adts[0] = (byte) 0xFF;
+        adts[1] = (byte) 0xF1; // MPEG-4, layer 0, sem CRC
+
+        // profile (AAC-LC = 01) << 6 | sampling index << 2 | channel cfg >> 2
+        int perfil = 1;           // AAC-LC
+        int sampleIndex = 4;      // 44100 Hz
+        int canalCfg = AUDIO_CHANNELS == 2 ? 2 : 1;
+
+        adts[2] = (byte) ((perfil << 6) | (sampleIndex << 2) | (canalCfg >> 2));
+        adts[3] = (byte) (((canalCfg & 0x3) << 6) | ((frameLen >> 11) & 0x3));
+
+        adts[4] = (byte) ((frameLen >> 3) & 0xFF);
+        adts[5] = (byte) (((frameLen & 0x7) << 5) | 0x1F);
+        adts[6] = (byte) 0xFC;
+
+        System.arraycopy(aac, 0, adts, 7, tamanho);
+
+        return adts;
+    }
+
+    private void pararAudio() {
+
+        audioAtivo = false;
+        audioWriterAtivo = false;
+
+        if (audioPcmQueue != null) {
+            audioPcmQueue.clear();
+        }
+
+        if (audioWriteQueue != null) {
+            audioWriteQueue.clear();
+        }
+
+        android.media.AudioRecord record = audioRecord;
+
+        if (record != null) {
+
+            try {
+                record.stop();
+            } catch (Exception ignored) {
+            }
+
+            try {
+                record.release();
+            } catch (Exception ignored) {
+            }
+
+            audioRecord = null;
+        }
+
+        MediaCodec encoder = aacEncoder;
+
+        if (encoder != null) {
+
+            try {
+                encoder.stop();
+            } catch (Exception ignored) {
+            }
+
+            try {
+                encoder.release();
+            } catch (Exception ignored) {
+            }
+
+            aacEncoder = null;
+        }
+
+        if (audioCaptureThread != null) {
+            audioCaptureThread.interrupt();
+            audioCaptureThread = null;
+        }
+
+        if (audioWriterThread != null) {
+            audioWriterThread.interrupt();
+            audioWriterThread = null;
+        }
+
+        desconectarAudioTcp();
+
+        Log.i(
+                "LUCAO_AUDIO",
+                "CAPTURA DE AUDIO PARADA"
+        );
+    }
+
+    // ============================================================
     // BINDER
     // ============================================================
 
@@ -3118,6 +4137,46 @@ Log.i(
                         intent.getStringExtra("lente");
 
                 trocarLente(lente);
+
+            } else if (ACTION_SET_ROTACAO.equals(action)) {
+
+                int rotacao =
+                        intent.getIntExtra(
+                                "rotacao",
+                                0
+                        );
+
+                definirRotacao(rotacao);
+
+            } else if (ACTION_SET_ESPELHO.equals(action)) {
+
+                boolean espelhar =
+                        intent.getBooleanExtra(
+                                "espelho",
+                                false
+                        );
+
+                definirEspelho(espelhar);
+
+            } else if (ACTION_SET_AUTO_ROTACAO.equals(action)) {
+
+                boolean ligada =
+                        intent.getBooleanExtra(
+                                "ligada",
+                                true
+                        );
+
+                definirAutoRotacao(ligada);
+
+            } else if (ACTION_SET_MIC.equals(action)) {
+
+                boolean ligado =
+                        intent.getBooleanExtra(
+                                "ligado",
+                                true
+                        );
+
+                definirMic(ligado);
 
             } else if (ACTION_START_CAMERA.equals(action)) {
 
@@ -3255,6 +4314,30 @@ Log.i(
             } else if ("flash".equals(tipo)) {
 
                 aplicarFlash(comando.optBoolean("ligado", false));
+
+            } else if ("rotacao".equals(tipo)) {
+
+                definirRotacao(
+                        comando.optInt("valor", 0)
+                );
+
+            } else if ("espelho".equals(tipo)) {
+
+                definirEspelho(
+                        comando.optBoolean("ligado", false)
+                );
+
+            } else if ("mic".equals(tipo)) {
+
+                definirMic(
+                        comando.optBoolean("ligado", true)
+                );
+
+            } else if ("autoRotacao".equals(tipo)) {
+
+                definirAutoRotacao(
+                        comando.optBoolean("ligada", true)
+                );
 
             } else if ("reconectar".equals(tipo)) {
 
@@ -3453,6 +4536,226 @@ Log.i(
 
                     iniciarCamera();
                 });
+    }
+
+    // ============================================================
+    // ROTACAO E ESPELHO
+    // ============================================================
+
+    // A rotacao e puramente software (aplicada no NV12 antes do
+    // encoder), entao nao precisa rebindar a camera: basta trocar o
+    // campo, recalcular as dimensoes do encoder e recriar o codec
+    // quando a rotacao muda W<->H (90/270).
+    private void definirRotacao(int rotacao) {
+
+        // Normaliza para 0/90/180/270.
+        rotacao = ((rotacao % 360) + 360) % 360;
+
+        if (rotacao != 0 &&
+                rotacao != 90 &&
+                rotacao != 180 &&
+                rotacao != 270) {
+
+            return;
+        }
+
+        if (rotacao == rotacaoGraus) {
+            return;
+        }
+
+        rotacaoGraus = rotacao;
+
+        getSharedPreferences(PREFS, MODE_PRIVATE)
+                .edit()
+                .putInt(PREF_ROTACAO, rotacao)
+                .apply();
+
+        Log.i(
+                "LUCAO_CONTROL",
+                "ROTACAO DEFINIDA: " + rotacao
+        );
+
+        aplicarMudancaGeometria();
+    }
+
+    // ============================================================
+    // AUTO-ROTACAO POR SENSOR
+    // ============================================================
+    //
+    // A orientacao fisica do celular vira rotacao 0/90/180/270
+    // (mesmo eixo do botao manual "girar"). O botao manual continua
+    // funcionando como ajuste fino: so sobrescrevemos quando a
+    // orientacao do sensor realmente muda (90 graus de diferenca).
+
+    private void iniciarAutoRotacao() {
+
+        if (orientationListener != null) {
+            return;
+        }
+
+        orientationListener = new OrientationEventListener(this) {
+
+            @Override
+            public void onOrientationChanged(int orientacao) {
+
+                if (!autoRotacao) {
+                    return;
+                }
+
+                // -1 = sensor sem leitura confiavel (aparelho deitado
+                // na mesa). Ignora para nao tremer a rotacao.
+                if (orientacao == ORIENTATION_UNKNOWN) {
+                    return;
+                }
+
+                int rotacao;
+
+                if (orientacao >= 315 || orientacao < 45) {
+                    rotacao = 0;
+                } else if (orientacao >= 45 && orientacao < 135) {
+                    rotacao = 270;
+                } else if (orientacao >= 135 && orientacao < 225) {
+                    rotacao = 180;
+                } else {
+                    rotacao = 90;
+                }
+
+                if (rotacao == ultimaOrientacaoSensor) {
+                    return;
+                }
+
+                ultimaOrientacaoSensor = rotacao;
+
+                definirRotacao(rotacao);
+            }
+        };
+
+        if (orientationListener.canDetectOrientation()) {
+            orientationListener.enable();
+            Log.i("LUCAO_CONTROL", "AUTO-ROTACAO LIGADA");
+        } else {
+            Log.w("LUCAO_CONTROL", "SENSOR DE ORIENTACAO INDISPONIVEL");
+            orientationListener = null;
+        }
+    }
+
+    private void pararAutoRotacao() {
+
+        if (orientationListener != null) {
+
+            orientationListener.disable();
+            orientationListener = null;
+
+            Log.i("LUCAO_CONTROL", "AUTO-ROTACAO DESLIGADA");
+        }
+    }
+
+    private void definirAutoRotacao(boolean ligada) {
+
+        if (ligada == autoRotacao) {
+            return;
+        }
+
+        autoRotacao = ligada;
+
+        Log.i("LUCAO_CONTROL", "AUTO-ROTACAO DEFINIDA: " + ligada);
+
+        if (ligada) {
+            iniciarAutoRotacao();
+        } else {
+            pararAutoRotacao();
+        }
+    }
+
+    private void definirEspelho(boolean espelhar) {
+
+        if (espelhar == espelhado) {
+            return;
+        }
+
+        espelhado = espelhar;
+
+        getSharedPreferences(PREFS, MODE_PRIVATE)
+                .edit()
+                .putBoolean(PREF_ESPELHO, espelhar)
+                .apply();
+
+        Log.i(
+                "LUCAO_CONTROL",
+                "ESPELHO DEFINIDO: " + espelhar
+        );
+
+        // Espelhar nao muda a resolucao, mas troca o conteudo de cada
+        // frame; recriar o encoder garante que o PC reancore num
+        // I-frame limpo (evita artefato de predicao na virada).
+        aplicarMudancaGeometria();
+    }
+
+    // Liga/desliga a captura do microfone. Off = pararAudio() de
+    // verdade (libera o mic no Android); On = iniciarAudio() se o
+    // video ja estiver conectado. Liga o estado no PC via broadcast.
+    private void definirMic(boolean ligado) {
+
+        if (ligado == micLigado) {
+            return;
+        }
+
+        micLigado = ligado;
+
+        getSharedPreferences(PREFS, MODE_PRIVATE)
+                .edit()
+                .putBoolean(PREF_MIC, ligado)
+                .apply();
+
+        Log.i(
+                "LUCAO_CONTROL",
+                "MIC DEFINIDO: " + ligado
+        );
+
+        if (ligado) {
+            // So faz sentido subir a captura se houver sessao de
+            // video (o PC so aceita audio com video ativo). Se ainda
+            // nao conectou, a propria reconexao de video chama
+            // iniciarAudio() depois.
+            if (pcConectado) {
+                iniciarAudio();
+            }
+        } else {
+            pararAudio();
+        }
+
+        broadcastStatus();
+    }
+
+    // Recalcula dimensoes do encoder e, se a rotacao trocou W<->H,
+    // recria o codec. Em qualquer caso marca um keyframe para o PC
+    // reancorar (mesmo quando so espelhou, sem mudar tamanho).
+    private void aplicarMudancaGeometria() {
+
+        ContextCompat.getMainExecutor(this).execute(() -> {
+
+            int encLarguraAntes = ENCODER_WIDTH;
+            int encAlturaAntes = ENCODER_HEIGHT;
+
+            atualizarDimensoesEncoder();
+
+            boolean dimsMudaram =
+                    ENCODER_WIDTH != encLarguraAntes ||
+                    ENCODER_HEIGHT != encAlturaAntes;
+
+            if (dimsMudaram && h264Encoder != null) {
+
+                // recriarEncoderH264() para/libera o codec antigo e
+                // cria outro ja com ENCODER_WIDTH/HEIGHT novos.
+                recriarEncoderH264();
+            }
+
+            // Novo enquadramento -> I-frame para o decoder do PC
+            // reancorar (inclusive no espelho, que nao muda tamanho).
+            solicitarKeyframeH264 = true;
+
+            broadcastStatus();
+        });
     }
 
 }

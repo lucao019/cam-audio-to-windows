@@ -7,6 +7,7 @@
 
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
 
     <application
         android:allowBackup="true"
@@ -34,7 +35,7 @@
         <service
     android:name=".CameraForegroundService"
     android:exported="false"
-    android:foregroundServiceType="camera" />
+    android:foregroundServiceType="camera|microphone" />
 
     </application>
 

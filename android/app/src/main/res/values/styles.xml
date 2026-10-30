@@ -75,4 +75,13 @@
         <item name="android:background">@color/term_border</item>
     </style>
 
+    <!-- Cabeçalho de grupo (card), no espirito do painel do PC -->
+    <style name="TermGroupTitle" parent="TermText">
+        <item name="android:textColor">@color/term_primary</item>
+        <item name="android:textSize">10sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:textAllCaps">true</item>
+        <item name="android:letterSpacing">0.18</item>
+    </style>
+
 </resources>

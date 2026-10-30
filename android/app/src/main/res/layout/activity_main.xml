@@ -3,6 +3,8 @@
 <!-- ============================================================
      LUCAO LINK - interface no estilo terminal.css
      bg #050505 | primario #8BE9FD | borda #333 | monospace
+     Versao "compacta" do painel do PC: controles agrupados
+     em cards (conexao / video / audio).
      ============================================================ -->
 
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
@@ -24,7 +26,7 @@
         android:background="@drawable/term_frame"
         android:orientation="vertical">
 
-        <!-- BARRA DE TITULO -->
+        <!-- BARRA DE TITULO (cabecalho) -->
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -88,7 +90,7 @@
                 android:orientation="vertical"
                 android:padding="12dp">
 
-                <!-- CABECALHO -->
+                <!-- TITULO -->
 
                 <TextView
                     android:layout_width="match_parent"
@@ -103,297 +105,374 @@
                     android:text="android → windows webcam"
                     style="@style/TermSubtitle" />
 
-                <View
+                <!-- ================================================
+                     GRUPO: CONEXAO
+                     ================================================ -->
+
+                <LinearLayout
                     android:layout_width="match_parent"
-                    android:layout_height="1dp"
+                    android:layout_height="wrap_content"
                     android:layout_marginTop="12dp"
-                    android:layout_marginBottom="10dp"
-                    android:background="@color/term_border" />
+                    android:background="@drawable/term_group"
+                    android:orientation="vertical"
+                    android:padding="10dp">
 
-                <!-- STATUS -->
-
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:gravity="center_vertical"
-                    android:orientation="horizontal">
-
+                    <!-- Titulo do grupo -->
                     <TextView
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="▸ pc"
-                        style="@style/TermSection" />
-
-                    <TextView
-                        android:id="@+id/statusText"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="offline"
-                        android:textColor="@color/term_danger"
-                        style="@style/TermStatus" />
-
-                </LinearLayout>
-
-                <!-- PC HOST (WIFI) -->
-
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="10dp"
-                    android:gravity="center_vertical"
-                    android:orientation="horizontal">
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginEnd="10dp"
-                        android:text="▸ pc host"
-                        style="@style/TermSection" />
-
-                    <EditText
-                        android:id="@+id/pcHostInput"
-                        android:layout_width="0dp"
-                        android:layout_height="34dp"
-                        android:layout_weight="1"
-                        android:background="@drawable/term_panel"
-                        android:hint="auto (usb) / 192.168.x.x"
-                        android:imeOptions="actionDone"
-                        android:inputType="textUri"
-                        android:maxLines="1"
-                        android:paddingStart="8dp"
-                        android:paddingEnd="8dp"
-                        android:textColor="@color/term_fg"
-                        android:textColorHint="@color/term_muted"
-                        android:textSize="10sp"
-                        android:fontFamily="monospace" />
-
-                </LinearLayout>
-
-                <!-- PREVIEW -->
-
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="14dp"
-                    android:text="▸ preview"
-                    style="@style/TermSection" />
-
-                <FrameLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="200dp"
-                    android:layout_marginTop="6dp"
-                    android:background="@drawable/term_panel"
-                    android:padding="1dp">
-
-                    <androidx.camera.view.PreviewView
-                        android:id="@+id/cameraPreview"
                         android:layout_width="match_parent"
-                        android:layout_height="match_parent"
-                        app:scaleType="fillCenter" />
+                        android:layout_height="wrap_content"
+                        android:text="▪ conexão"
+                        style="@style/TermGroupTitle" />
+
+                    <View
+                        android:layout_width="match_parent"
+                        android:layout_height="1dp"
+                        android:layout_marginTop="6dp"
+                        android:layout_marginBottom="8dp"
+                        android:background="@color/term_border" />
+
+                    <!-- STATUS -->
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <TextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="pc"
+                            style="@style/TermSection" />
+
+                        <TextView
+                            android:id="@+id/statusText"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="offline"
+                            android:textColor="@color/term_danger"
+                            style="@style/TermStatus" />
+
+                    </LinearLayout>
+
+                    <!-- PC HOST (WIFI) -->
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginEnd="10dp"
+                            android:text="host"
+                            style="@style/TermSection" />
+
+                        <EditText
+                            android:id="@+id/pcHostInput"
+                            android:layout_width="0dp"
+                            android:layout_height="34dp"
+                            android:layout_weight="1"
+                            android:background="@drawable/term_panel"
+                            android:hint="auto (usb) / 192.168.x.x"
+                            android:imeOptions="actionDone"
+                            android:inputType="textUri"
+                            android:fontFamily="monospace"
+                            android:maxLines="1"
+                            android:paddingStart="8dp"
+                            android:paddingEnd="8dp"
+                            android:textColor="@color/term_fg"
+                            android:textColorHint="@color/term_muted"
+                            android:textSize="10sp" />
+
+                    </LinearLayout>
+
+                    <!-- CONECTAR -->
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/connectButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="44dp"
+                        android:layout_marginTop="10dp"
+                        android:fontFamily="monospace"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        android:letterSpacing="0.12"
+                        android:text="conectar ao pc"
+                        android:textAllCaps="true"
+                        android:textColor="@color/term_button_text"
+                        android:textSize="12sp"
+                        android:textStyle="bold"
+                        app:backgroundTint="@color/term_button_bg"
+                        app:cornerRadius="0dp"
+                        app:rippleColor="@color/term_primary_dim"
+                        app:strokeColor="@color/term_primary"
+                        app:strokeWidth="1dp" />
 
                     <TextView
-                        android:layout_width="wrap_content"
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_gravity="bottom|start"
-                        android:layout_margin="8dp"
-                        android:background="@drawable/term_chip"
-                        android:paddingStart="6dp"
-                        android:paddingTop="3dp"
-                        android:paddingEnd="6dp"
-                        android:paddingBottom="3dp"
-                        android:text="640×480 · 30fps · h264"
+                        android:layout_marginTop="8dp"
+                        android:gravity="center"
+                        android:text="5050/http · 5051/h264 · usb"
                         style="@style/TermMuted" />
 
-                </FrameLayout>
+                </LinearLayout>
 
-                <!-- LINHA DIVISORIA -->
-
-                <View
-                    android:layout_width="match_parent"
-                    android:layout_height="1dp"
-                    android:layout_marginTop="14dp"
-                    android:layout_marginBottom="10dp"
-                    android:background="@color/term_border" />
-
-                <!-- WEBCAM -->
+                <!-- ================================================
+                     GRUPO: VIDEO
+                     ================================================ -->
 
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:gravity="center_vertical"
-                    android:orientation="horizontal">
+                    android:layout_marginTop="10dp"
+                    android:background="@drawable/term_group"
+                    android:orientation="vertical"
+                    android:padding="10dp">
 
+                    <!-- Titulo do grupo + toggle webcam -->
                     <LinearLayout
-                        android:layout_width="0dp"
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:orientation="vertical">
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <TextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="▪ vídeo"
+                            style="@style/TermGroupTitle" />
 
                         <TextView
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="▸ webcam"
+                            android:layout_marginEnd="8dp"
+                            android:text="webcam"
+                            style="@style/TermMuted" />
+
+                        <CheckBox
+                            android:id="@+id/webcamSwitch"
+                            android:layout_width="28dp"
+                            android:layout_height="28dp"
+                            android:background="@drawable/term_toggle"
+                            android:button="@null"
+                            android:checked="true"
+                            android:contentDescription="webcam on/off" />
+
+                    </LinearLayout>
+
+                    <View
+                        android:layout_width="match_parent"
+                        android:layout_height="1dp"
+                        android:layout_marginTop="6dp"
+                        android:layout_marginBottom="8dp"
+                        android:background="@color/term_border" />
+
+                    <!-- PREVIEW -->
+                    <FrameLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="180dp"
+                        android:background="@drawable/term_panel"
+                        android:padding="1dp">
+
+                        <androidx.camera.view.PreviewView
+                            android:id="@+id/cameraPreview"
+                            android:layout_width="match_parent"
+                            android:layout_height="match_parent"
+                            app:scaleType="fillCenter" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_gravity="bottom|start"
+                            android:layout_margin="8dp"
+                            android:background="@drawable/term_chip"
+                            android:paddingStart="6dp"
+                            android:paddingTop="3dp"
+                            android:paddingEnd="6dp"
+                            android:paddingBottom="3dp"
+                            android:text="640×480 · 30fps · h264"
+                            style="@style/TermMuted" />
+
+                    </FrameLayout>
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:text="h.264 · 640×480 · 30 fps · 2 mbps"
+                        style="@style/TermMuted" />
+
+                    <!-- ZOOM -->
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <TextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="zoom"
                             style="@style/TermSection" />
 
                         <TextView
+                            android:id="@+id/zoomValueText"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:layout_marginTop="3dp"
-                            android:text="h.264 · 640×480 · 30 fps · 2 mbps"
+                            android:text="1.0x"
+                            style="@style/TermValue" />
+
+                    </LinearLayout>
+
+                    <SeekBar
+                        android:id="@+id/zoomSeekBar"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp"
+                        android:max="100"
+                        android:paddingStart="10dp"
+                        android:paddingEnd="10dp"
+                        android:progress="0"
+                        android:progressBackgroundTint="@color/term_border"
+                        android:progressTint="@color/term_primary"
+                        android:thumbTint="@color/term_primary" />
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal">
+
+                        <TextView
+                            android:id="@+id/zoomMinText"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="1.0x"
+                            style="@style/TermMuted" />
+
+                        <TextView
+                            android:id="@+id/zoomMaxText"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="10.0x"
                             style="@style/TermMuted" />
 
                     </LinearLayout>
 
-                    <CheckBox
-                        android:id="@+id/webcamSwitch"
-                        android:layout_width="28dp"
-                        android:layout_height="28dp"
-                        android:background="@drawable/term_toggle"
-                        android:button="@null"
-                        android:checked="true"
-                        android:contentDescription="webcam on/off" />
-
-                </LinearLayout>
-
-                <!-- ZOOM -->
-
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="14dp"
-                    android:gravity="center_vertical"
-                    android:orientation="horizontal">
-
-                    <TextView
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="▸ zoom"
-                        style="@style/TermSection" />
-
-                    <TextView
-                        android:id="@+id/zoomValueText"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="1.0x"
-                        style="@style/TermValue" />
-
-                </LinearLayout>
-
-                <SeekBar
-                    android:id="@+id/zoomSeekBar"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="2dp"
-                    android:max="100"
-                    android:paddingStart="10dp"
-                    android:paddingEnd="10dp"
-                    android:progress="0"
-                    android:progressBackgroundTint="@color/term_border"
-                    android:progressTint="@color/term_primary"
-                    android:thumbTint="@color/term_primary" />
-
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal">
-
-                    <TextView
-                        android:id="@+id/zoomMinText"
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="1.0x"
-                        style="@style/TermMuted" />
-
-                    <TextView
-                        android:id="@+id/zoomMaxText"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="10.0x"
-                        style="@style/TermMuted" />
-
-                </LinearLayout>
-
-                <!-- MICROFONE -->
-
-                <View
-                    android:layout_width="match_parent"
-                    android:layout_height="1dp"
-                    android:layout_marginTop="10dp"
-                    android:layout_marginBottom="10dp"
-                    android:background="@color/term_border" />
-
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:gravity="center_vertical"
-                    android:orientation="horizontal">
-
+                    <!-- ORIENTACAO (girar + espelhar) -->
                     <LinearLayout
-                        android:layout_width="0dp"
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:orientation="vertical">
+                        android:layout_marginTop="10dp"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
 
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="▸ microfone"
-                            android:textColor="@color/term_muted"
-                            style="@style/TermSection" />
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/rotateButton"
+                            android:layout_width="0dp"
+                            android:layout_height="40dp"
+                            android:layout_weight="1"
+                            android:layout_marginEnd="6dp"
+                            android:fontFamily="monospace"
+                            android:insetTop="0dp"
+                            android:insetBottom="0dp"
+                            android:letterSpacing="0.08"
+                            android:text="girar 0°"
+                            android:textAllCaps="false"
+                            android:textColor="@color/term_button_text"
+                            android:textSize="11sp"
+                            app:backgroundTint="@color/term_button_bg"
+                            app:cornerRadius="0dp"
+                            app:rippleColor="@color/term_primary_dim"
+                            app:strokeColor="@color/term_border"
+                            app:strokeWidth="1dp" />
 
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="3dp"
-                            android:text="[ em desenvolvimento ]"
-                            android:textColor="@color/term_warning"
-                            style="@style/TermMuted" />
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/mirrorButton"
+                            android:layout_width="0dp"
+                            android:layout_height="40dp"
+                            android:layout_weight="1"
+                            android:layout_marginStart="6dp"
+                            android:fontFamily="monospace"
+                            android:insetTop="0dp"
+                            android:insetBottom="0dp"
+                            android:letterSpacing="0.08"
+                            android:text="espelho OFF"
+                            android:textAllCaps="false"
+                            android:textColor="@color/term_button_text"
+                            android:textSize="11sp"
+                            app:backgroundTint="@color/term_button_bg"
+                            app:cornerRadius="0dp"
+                            app:rippleColor="@color/term_primary_dim"
+                            app:strokeColor="@color/term_border"
+                            app:strokeWidth="1dp" />
 
                     </LinearLayout>
 
-                    <CheckBox
-                        android:id="@+id/microphoneSwitch"
-                        android:layout_width="28dp"
-                        android:layout_height="28dp"
-                        android:background="@drawable/term_toggle"
-                        android:button="@null"
-                        android:checked="false"
-                        android:enabled="false" />
-
                 </LinearLayout>
 
-                <!-- CONECTAR -->
+                <!-- ================================================
+                     GRUPO: AUDIO
+                     ================================================ -->
 
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/connectButton"
-                    android:layout_width="match_parent"
-                    android:layout_height="48dp"
-                    android:layout_marginTop="16dp"
-                    android:fontFamily="monospace"
-                    android:insetTop="0dp"
-                    android:insetBottom="0dp"
-                    android:letterSpacing="0.12"
-                    android:text="conectar ao pc"
-                    android:textAllCaps="true"
-                    android:textColor="@color/term_button_text"
-                    android:textSize="12sp"
-                    android:textStyle="bold"
-                    app:backgroundTint="@color/term_button_bg"
-                    app:cornerRadius="0dp"
-                    app:rippleColor="@color/term_primary_dim"
-                    app:strokeColor="@color/term_primary"
-                    app:strokeWidth="1dp" />
-
-                <TextView
+                <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="10dp"
-                    android:gravity="center"
-                    android:text="5050/http · 5051/h264 · usb"
-                    style="@style/TermMuted" />
+                    android:background="@drawable/term_group"
+                    android:orientation="vertical"
+                    android:padding="10dp">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <TextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="▪ áudio"
+                            style="@style/TermGroupTitle" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginEnd="8dp"
+                            android:text="mic"
+                            style="@style/TermMuted" />
+
+                        <CheckBox
+                            android:id="@+id/microphoneSwitch"
+                            android:layout_width="28dp"
+                            android:layout_height="28dp"
+                            android:background="@drawable/term_toggle"
+                            android:button="@null"
+                            android:checked="true" />
+
+                    </LinearLayout>
+
+                    <View
+                        android:layout_width="match_parent"
+                        android:layout_height="1dp"
+                        android:layout_marginTop="6dp"
+                        android:layout_marginBottom="8dp"
+                        android:background="@color/term_border" />
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="captura no celular · envio para o pc"
+                        style="@style/TermMuted" />
+
+                </LinearLayout>
 
                 <!-- PROMPT -->
 

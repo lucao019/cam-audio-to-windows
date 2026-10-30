@@ -93,6 +93,10 @@ function obterAparelho(id) {
             lentesDisponiveis: ["back"],
             flash: false,
             flashDisponivel: false,
+            rotacao: 0,
+            espelho: false,
+            mic: true,
+            autoRotacao: true,
             ultimoContato: 0,
             comandos: [],
             criadoEm: Date.now()
@@ -139,6 +143,10 @@ function listarAparelhos() {
             lentesDisponiveis: aparelho.lentesDisponiveis,
             flash: aparelho.flash,
             flashDisponivel: aparelho.flashDisponivel,
+            rotacao: aparelho.rotacao,
+            espelho: aparelho.espelho,
+            mic: aparelho.mic,
+            autoRotacao: aparelho.autoRotacao,
             ultimoContato: aparelho.ultimoContato,
             online: agora - aparelho.ultimoContato < ONLINE_MS
         });
@@ -208,6 +216,22 @@ app.post("/api/status", (req, res) => {
 
     if (typeof corpo.flashDisponivel === "boolean") {
         aparelho.flashDisponivel = corpo.flashDisponivel;
+    }
+
+    if (Number.isFinite(corpo.rotacao)) {
+        aparelho.rotacao = corpo.rotacao;
+    }
+
+    if (typeof corpo.espelho === "boolean") {
+        aparelho.espelho = corpo.espelho;
+    }
+
+    if (typeof corpo.mic === "boolean") {
+        aparelho.mic = corpo.mic;
+    }
+
+    if (typeof corpo.autoRotacao === "boolean") {
+        aparelho.autoRotacao = corpo.autoRotacao;
     }
 
     if (Number.isFinite(corpo.fps)) {
@@ -316,6 +340,50 @@ app.post("/api/devices/:id/flash", (req, res) => {
     const ligado = Boolean((req.body || {}).ligado);
 
     enfileirar(req.params.id, { tipo: "flash", ligado });
+
+    res.json({ ok: true });
+});
+
+app.post("/api/devices/:id/rotacao", (req, res) => {
+    let valor = Number((req.body || {}).valor);
+
+    if (!Number.isFinite(valor)) {
+        return res.status(400).json({ ok: false, erro: "rotacao invalida" });
+    }
+
+    valor = ((Math.round(valor) % 360) + 360) % 360;
+
+    if (valor !== 0 && valor !== 90 && valor !== 180 && valor !== 270) {
+        return res.status(400).json({ ok: false, erro: "rotacao deve ser 0, 90, 180 ou 270" });
+    }
+
+    enfileirar(req.params.id, { tipo: "rotacao", valor });
+
+    res.json({ ok: true });
+});
+
+app.post("/api/devices/:id/espelho", (req, res) => {
+    const ligado = Boolean((req.body || {}).ligado);
+
+    enfileirar(req.params.id, { tipo: "espelho", ligado });
+
+    res.json({ ok: true });
+});
+
+// Liga/desliga o microfone do celular (captura de verdade).
+app.post("/api/devices/:id/mic", (req, res) => {
+    const ligado = Boolean((req.body || {}).ligado);
+
+    enfileirar(req.params.id, { tipo: "mic", ligado });
+
+    res.json({ ok: true });
+});
+
+// Liga/desliga a auto-rotacao por sensor no celular.
+app.post("/api/devices/:id/auto-rotacao", (req, res) => {
+    const ligada = Boolean((req.body || {}).ligada);
+
+    enfileirar(req.params.id, { tipo: "autoRotacao", ligada });
 
     res.json({ ok: true });
 });
@@ -514,6 +582,8 @@ function painel() {
 
         <div class="actions">
           <button class="button webcam"></button>
+          <button class="button rotacao"></button>
+          <button class="button espelho"></button>
           <span class="muted small atualizado"></span>
         </div>
       </div>
@@ -532,6 +602,8 @@ function painel() {
       zoomMin: card.querySelector(".zoom-min"),
       zoomMax: card.querySelector(".zoom-max"),
       webcam: card.querySelector(".webcam"),
+      rotacao: card.querySelector(".rotacao"),
+      espelho: card.querySelector(".espelho"),
       atualizado: card.querySelector(".atualizado")
     };
 
@@ -552,6 +624,16 @@ function painel() {
     refs.webcam.addEventListener("click", () => {
       const atual = refs.webcam.dataset.ligada === "true";
       enviarWebcam(aparelho.id, !atual);
+    });
+
+    refs.rotacao.addEventListener("click", () => {
+      const atual = Number(refs.rotacao.dataset.rotacao) || 0;
+      enviarRotacao(aparelho.id, (atual + 90) % 360);
+    });
+
+    refs.espelho.addEventListener("click", () => {
+      const atual = refs.espelho.dataset.espelho === "true";
+      enviarEspelho(aparelho.id, !atual);
     });
 
     return refs;
@@ -580,6 +662,22 @@ function painel() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ligada })
+    });
+  }
+
+  async function enviarRotacao(id, valor) {
+    await fetch("/api/devices/" + encodeURIComponent(id) + "/rotacao", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ valor })
+    });
+  }
+
+  async function enviarEspelho(id, ligado) {
+    await fetch("/api/devices/" + encodeURIComponent(id) + "/espelho", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ligado })
     });
   }
 
@@ -621,6 +719,17 @@ function painel() {
     refs.webcam.textContent = aparelho.webcam ? "webcam: on" : "webcam: off";
     refs.webcam.classList.toggle("is-success", aparelho.webcam);
     refs.webcam.classList.toggle("is-danger", !aparelho.webcam);
+
+    const rotacao = Number(aparelho.rotacao) || 0;
+
+    refs.rotacao.dataset.rotacao = String(rotacao);
+    refs.rotacao.textContent = "girar " + rotacao + "°";
+    refs.rotacao.classList.toggle("is-success", rotacao !== 0);
+
+    refs.espelho.dataset.espelho = String(Boolean(aparelho.espelho));
+    refs.espelho.textContent = aparelho.espelho ? "espelho: on" : "espelho: off";
+    refs.espelho.classList.toggle("is-success", Boolean(aparelho.espelho));
+    refs.espelho.classList.toggle("is-danger", !aparelho.espelho);
 
     refs.atualizado.textContent = online ? "sync ok" : "sem contato";
   }
