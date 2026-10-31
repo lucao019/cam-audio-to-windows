@@ -13,9 +13,10 @@ import android.os.Build;
 import android.os.Bundle;
 import android.util.Log;
 import android.util.SizeF;
+import android.view.ScaleGestureDetector;
 import android.widget.Button;
 import android.widget.EditText;
-import android.widget.SeekBar;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import androidx.activity.result.ActivityResultLauncher;
@@ -47,10 +48,7 @@ public class MainActivity extends AppCompatActivity {
 
     private PreviewView cameraPreview;
 
-    private SeekBar zoomSeekBar;
-    private TextView zoomValueText;
-    private TextView zoomMinText;
-    private TextView zoomMaxText;
+    private TextView zoomBadge;
 
     private android.widget.CheckBox webcamSwitch;
 
@@ -59,10 +57,45 @@ public class MainActivity extends AppCompatActivity {
     private Button rotateButton;
     private Button mirrorButton;
 
+    // Controles sobrepostos ao video (estilo app de camera).
+    private Button flashButton;
+    private Button lenteButton;
+    private Button autoRotButton;
+    private LinearLayout zoomPresets;
+    private android.view.View bolinhaView;
+
+    // Ultimo estado pintado, para nao repintar a cada status
+    // (o status chega varias vezes por segundo e repintar tudo
+    // derruba o aparelho por memoria/CPU).
+    private float ultimoPresetRatio = -1f;
+    private float ultimoZoomBadge = -1f;
+    private boolean ultimaConexao = false;
+    private boolean ultimoFlash = false;
+    private boolean ultimoFlashDisp = false;
+    private String ultimaLente = "";
+    private boolean ultimoAutoRot = true;
+
+    // Zoom corrente em RATIO (1.0 = 1x ... zoomMaxLocal = max).
+    // Fonte da verdade local para pinça e presets.
+    private float zoomRatioLocal = 1.0f;
+
     // Estado local otimista (o servico confirma via broadcast).
     private int rotacaoLocal = 0;
     private boolean espelhoLocal = false;
     private boolean micLocal = true;
+    private boolean flashLocal = false;
+    private boolean flashDisponivelLocal = false;
+    private boolean autoRotLocal = true;
+
+    // Lente e faixa de zoom reportadas pelo servico.
+    private String lenteLocal = "back";
+    private List<String> lentesDisponiveisLocal = new ArrayList<>();
+    private float zoomMinLocal = 1f;
+    private float zoomMaxLocal = 1f;
+
+    // Guarda os presets ja desenhados, para nao recriar a cada
+    // status (o status chega varias vezes por segundo).
+    private String presetsAssinatura = "";
 
     // Evita loop ao marcar/desmarcar o toggle via codigo.
     private boolean sincronizandoMic = false;
@@ -71,17 +104,18 @@ public class MainActivity extends AppCompatActivity {
 
     private boolean sincronizandoWebcam = false;
 
-    // Evita o slider de zoom "saltar": enquanto o dedo esta na
-    // SeekBar, o status vindo do servico (zoom real do sensor, que
-    // muda em degraus) nao sobrescreve a posicao escolhida.
-    private boolean zoomArrastando = false;
+    // Pinça: enquanto os dedos estao na tela, o status vindo do
+    // servico nao sobrescreve a escala que o usuario escolheu.
+    private boolean pinchAtivo = false;
 
-    // Debounce do zoom: agrupa varias mudancas do slider num unico
+    // Debounce do zoom: agrupa varias mudancas da pinca num unico
     // comando ao servico, para nao inundar o CameraX.
     private final android.os.Handler zoomHandler =
             new android.os.Handler(android.os.Looper.getMainLooper());
     private Runnable zoomEnvioPendente = null;
-    private int zoomProgressoPendente = 0;
+    private float zoomLinearPendente = 0.0f;
+
+    private ScaleGestureDetector scaleDetector;
 
     private static final String PREFS = "lucao_link";
     private static final String PREF_PC_HOST = "pcHost";
@@ -132,6 +166,8 @@ public class MainActivity extends AppCompatActivity {
                         );
                     }
 
+                    pintarBolinha(conectado);
+
                     // Sincroniza o checkbox quando o comando veio
                     // do painel do PC.
                     if (intent.hasExtra("webcam") && webcamSwitch != null) {
@@ -167,50 +203,82 @@ public class MainActivity extends AppCompatActivity {
                                         1.0f
                                 );
 
-                        float linear =
-                                intent.getFloatExtra(
-                                        "linearZoom",
-                                        0.0f
-                                );
+                        zoomMinLocal = minimo;
+                        zoomMaxLocal = maximo;
 
-                        zoomValueText.setText(
-                                String.format(
-                                        Locale.US,
-                                        "%.1fx",
-                                        zoom
-                                )
-                        );
+                        desenharZoomPresets();
 
-                        zoomMinText.setText(
-                                String.format(
-                                        Locale.US,
-                                        "%.1fx",
-                                        minimo
-                                )
-                        );
+                        // Enquanto a pinça esta ativa, o status nao
+                        // sobrescreve o que o dedo escolheu (o sensor
+                        // reporta em degraus e faria o zoom "saltar").
+                        if (!pinchAtivo) {
 
-                        zoomMaxText.setText(
-                                String.format(
-                                        Locale.US,
-                                        "%.1fx",
-                                        maximo
-                                )
-                        );
+                            zoomRatioLocal = Math.max(
+                                    1.0f,
+                                    Math.min(maximo, zoom)
+                            );
 
-                        // fromUser=false, entao nao gera
-                        // eco de comando de volta ao servico.
-                        //
-                        // Se o usuario esta arrastando o slider,
-                        // NAO reposiciona: o sensor reporta o zoom
-                        // real em degraus e isso faria o botao
-                        // "saltar" para tras enquanto o dedo move.
-                        if (!zoomArrastando) {
-                            zoomSeekBar.setProgress(
-                                    Math.round(
-                                            linear * 100
-                                    )
+                            atualizarZoomBadge(zoomRatioLocal);
+
+                            marcarPresetAtivo(
+                                    arredondarPreset(zoomRatioLocal)
                             );
                         }
+                    }
+
+                    // Sincroniza lente/flash/auto-rotacao quando o
+                    // comando veio do painel do PC.
+                    if (intent.hasExtra("lentesDisponiveis")) {
+
+                        ArrayList<String> lentes =
+                                intent.getStringArrayListExtra(
+                                        "lentesDisponiveis"
+                                );
+
+                        if (lentes != null) {
+                            lentesDisponiveisLocal = lentes;
+                        }
+                    }
+
+                    if (intent.hasExtra("lente")) {
+
+                        lenteLocal = intent.getStringExtra("lente");
+
+                        pintarLente();
+
+                        // Faixa de zoom muda com a lente: forca
+                        // reconstrucao dos presets.
+                        presetsAssinatura = "";
+
+                        desenharZoomPresets();
+                    }
+
+                    if (intent.hasExtra("flash")) {
+
+                        flashLocal =
+                                intent.getBooleanExtra(
+                                        "flash",
+                                        false
+                                );
+
+                        flashDisponivelLocal =
+                                intent.getBooleanExtra(
+                                        "flashDisponivel",
+                                        true
+                                );
+
+                        pintarFlash();
+                    }
+
+                    if (intent.hasExtra("autoRotacao")) {
+
+                        autoRotLocal =
+                                intent.getBooleanExtra(
+                                        "autoRotacao",
+                                        true
+                                );
+
+                        pintarAutoRot();
                     }
 
                     // Sincroniza os botoes de orientacao quando o
@@ -368,10 +436,15 @@ protected void onCreate(Bundle savedInstanceState) {
                 cameraPreview.getSurfaceProvider()
         );
 
-        zoomSeekBar = findViewById(R.id.zoomSeekBar);
-        zoomValueText = findViewById(R.id.zoomValueText);
-        zoomMinText = findViewById(R.id.zoomMinText);
-        zoomMaxText = findViewById(R.id.zoomMaxText);
+        // Preview preenche a tela toda (crop), sobreposto pelos
+        // controles - igual a camera nativa do aparelho.
+        cameraPreview.setScaleType(
+                PreviewView.ScaleType.FILL_CENTER
+        );
+
+        zoomBadge = findViewById(R.id.zoomBadge);
+
+        configurarPinca();
 
         webcamSwitch = findViewById(R.id.webcamSwitch);
 
@@ -380,7 +453,78 @@ protected void onCreate(Bundle savedInstanceState) {
         rotateButton = findViewById(R.id.rotateButton);
         mirrorButton = findViewById(R.id.mirrorButton);
 
+        flashButton = findViewById(R.id.btnFlash);
+        lenteButton = findViewById(R.id.btnLente);
+        autoRotButton = findViewById(R.id.btnAutoRot);
+        zoomPresets = findViewById(R.id.zoomPresets);
+        bolinhaView = findViewById(R.id.bolinha);
+
         pcHostInput = findViewById(R.id.pcHostInput);
+
+        // ----------------------------
+        // CONTROLES DE CAMERA (UI -> servico)
+        // ----------------------------
+
+        flashButton.setOnClickListener(v -> {
+
+            flashLocal = !flashLocal;
+
+            Bundle extras = new Bundle();
+            extras.putBoolean("ligado", flashLocal);
+
+            enviarAcaoServico(
+                    CameraForegroundService.ACTION_SET_FLASH,
+                    extras
+            );
+
+            pintarFlash();
+        });
+
+        lenteButton.setOnClickListener(v -> {
+
+            // Alterna entre as lentes que o aparelho expoe.
+            String alvo;
+
+            if (lentesDisponiveisLocal.size() >= 2) {
+
+                alvo = lenteLocal.equals("back")
+                        ? "front"
+                        : "back";
+
+            } else {
+
+                alvo = lenteLocal.equals("back")
+                        ? "front"
+                        : "back";
+            }
+
+            Bundle extras = new Bundle();
+            extras.putString("lente", alvo);
+
+            enviarAcaoServico(
+                    CameraForegroundService.ACTION_SET_LENTE,
+                    extras
+            );
+
+            lenteLocal = alvo;
+            pintarLente();
+        });
+
+        autoRotButton.setOnClickListener(v -> {
+
+            autoRotLocal = !autoRotLocal;
+
+            Bundle extras = new Bundle();
+            extras.putBoolean("ligada", autoRotLocal);
+
+            enviarAcaoServico(
+                    CameraForegroundService
+                            .ACTION_SET_AUTO_ROTACAO,
+                    extras
+            );
+
+            pintarAutoRot();
+        });
 
         // ----------------------------
         // MICROFONE (UI -> servico)
@@ -419,83 +563,10 @@ protected void onCreate(Bundle savedInstanceState) {
         detectarCamerasDisponiveis();
 
         // ----------------------------
-        // ZOOM (UI -> servico)
+        // ZOOM: so pinca + presets (UI -> servico)
         // ----------------------------
 
-        zoomSeekBar.setOnSeekBarChangeListener(
-                new SeekBar.OnSeekBarChangeListener() {
-
-                    @Override
-                    public void onProgressChanged(
-                            SeekBar seekBar,
-                            int progress,
-                            boolean fromUser
-                    ) {
-
-                        if (!fromUser) {
-                            return;
-                        }
-
-                        // Mostra o valor na hora (feedback imediato).
-                        zoomValueText.setText(
-                                String.format(
-                                        Locale.US,
-                                        "%.1fx",
-                                        1.0f + progress / 100.0f * 9.0f
-                                )
-                        );
-
-                        // Agrupa rajadas de mudancas num unico
-                        // comando (o sensor suaviza sozinho).
-                        zoomProgressoPendente = progress;
-
-                        if (zoomEnvioPendente != null) {
-                            zoomHandler.removeCallbacks(
-                                    zoomEnvioPendente
-                            );
-                        }
-
-                        zoomEnvioPendente = () -> {
-
-                            Bundle extras = new Bundle();
-
-                            extras.putFloat(
-                                    "zoom",
-                                    zoomProgressoPendente / 100.0f
-                            );
-
-                            enviarAcaoServico(
-                                    CameraForegroundService
-                                            .ACTION_SET_ZOOM,
-                                    extras
-                            );
-                        };
-
-                        zoomHandler.postDelayed(
-                                zoomEnvioPendente,
-                                60
-                        );
-                    }
-
-                    @Override
-                    public void onStartTrackingTouch(
-                            SeekBar seekBar
-                    ) {
-
-                        // Trava a sincronizacao status->slider
-                        // enquanto o dedo esta no controle.
-                        zoomArrastando = true;
-                    }
-
-                    @Override
-                    public void onStopTrackingTouch(
-                            SeekBar seekBar
-                    ) {
-
-                        zoomArrastando = false;
-                    }
-                }
-        );
+        configurarPinca();
 
         // ----------------------------
         // WEBCAM ON/OFF (UI -> servico)
@@ -598,6 +669,10 @@ protected void onCreate(Bundle savedInstanceState) {
                 1000
         );
 
+        pintarFlash();
+        pintarLente();
+        pintarAutoRot();
+
         verificarCamera();
     }
 
@@ -653,6 +728,471 @@ protected void onCreate(Bundle savedInstanceState) {
                     e
             );
         }
+    }
+
+    // ============================================================
+    // PRESETS DE ZOOM (estilo camera 0,5x / 1x / 2x / 5x)
+    // ============================================================
+    //
+    // O servico espera o valor LINEAR normalizado 0..1 (mesma
+    // regra do CameraX). A conversao ratio -> linear e:
+    //
+    //     linear = (1 - 1/ratio) / (1 - 1/max)
+    //
+    // Assim "1x" = 0 e "max" = 1, qualquer que seja a lente.
+
+    private static float linearDeRatio(float ratio, float max) {
+
+        if (max <= 1.0f) {
+            return 0.0f;
+        }
+
+        float linear =
+                (1.0f - 1.0f / ratio) / (1.0f - 1.0f / max);
+
+        return Math.max(0.0f, Math.min(1.0f, linear));
+    }
+
+    // Aplica um zoom em RATIO (1.0 .. zoomMaxLocal): manda o
+    // valor LINEAR para o servico, atualiza badge e preset ativo.
+    private void aplicarZoomRatio(float ratio) {
+
+        float max = Math.max(1.0f, zoomMaxLocal);
+
+        float limitado = Math.max(1.0f, Math.min(max, ratio));
+
+        zoomRatioLocal = limitado;
+
+        float linear = linearDeRatio(limitado, max);
+
+        Bundle extras = new Bundle();
+        extras.putFloat("zoom", linear);
+
+        enviarAcaoServico(
+                CameraForegroundService.ACTION_SET_ZOOM,
+                extras
+        );
+
+        atualizarZoomBadge(limitado);
+        marcarPresetAtivo(limitado);
+    }
+
+    private void irParaZoom(float ratio) {
+        aplicarZoomRatio(ratio);
+    }
+
+    // Atualiza o chip "X.Xx" so quando muda de fato (o status
+    // chega varias vezes por segundo).
+    private void atualizarZoomBadge(float ratio) {
+
+        if (zoomBadge == null) {
+            return;
+        }
+
+        if (Math.abs(ratio - ultimoZoomBadge) < 0.05f) {
+            return;
+        }
+
+        ultimoZoomBadge = ratio;
+
+        zoomBadge.setText(
+                String.format(Locale.US, "%.1fx", ratio)
+        );
+    }
+
+    // ============================================================
+    // PINCA PARA ZOOM (dois dedos sobre o preview)
+    // ============================================================
+
+    private void configurarPinca() {
+
+        if (cameraPreview == null) {
+            return;
+        }
+
+        // CameraX ja controla o toque de foco; a pinça roda em
+        // paralelo e so consome o gesto de escala.
+        cameraPreview.setClickable(true);
+
+        scaleDetector = new ScaleGestureDetector(
+                this,
+                new ScaleGestureDetector
+                        .SimpleOnScaleGestureListener() {
+
+                    @Override
+                    public boolean onScaleBegin(
+                            ScaleGestureDetector d
+                    ) {
+
+                        pinchAtivo = true;
+                        return true;
+                    }
+
+                    @Override
+                    public boolean onScale(
+                            ScaleGestureDetector d
+                    ) {
+
+                        float max = Math.max(
+                                1.0f,
+                                zoomMaxLocal
+                        );
+
+                        float novo = zoomRatioLocal
+                                * d.getScaleFactor();
+
+                        novo = Math.max(1.0f, Math.min(max, novo));
+
+                        zoomRatioLocal = novo;
+
+                        // Feedback visual imediato.
+                        atualizarZoomBadge(novo);
+                        marcarPresetAtivo(
+                                arredondarPreset(novo)
+                        );
+
+                        agendarEnvioZoom(novo);
+                        return true;
+                    }
+
+                    @Override
+                    public void onScaleEnd(
+                            ScaleGestureDetector d
+                    ) {
+
+                        pinchAtivo = false;
+
+                        // Garante o envio final do valor.
+                        agendarEnvioZoom(zoomRatioLocal);
+                    }
+                }
+        );
+
+        // Captura o toque no container inteiro (sobre o video),
+        // deixando os botoes/overlays responderem normalmente.
+        android.view.View.OnTouchListener ouvinte =
+                (v, evento) -> scaleDetector.onTouchEvent(evento);
+
+        cameraPreview.setOnTouchListener(ouvinte);
+    }
+
+    // Envia o zoom (linear) ao servico com debounce, para nao
+    // inundar o CameraX durante a pinça.
+    private void agendarEnvioZoom(float ratio) {
+
+        float max = Math.max(1.0f, zoomMaxLocal);
+
+        zoomLinearPendente = linearDeRatio(ratio, max);
+
+        if (zoomEnvioPendente != null) {
+            zoomHandler.removeCallbacks(zoomEnvioPendente);
+        }
+
+        zoomEnvioPendente = () -> {
+
+            Bundle extras = new Bundle();
+            extras.putFloat("zoom", zoomLinearPendente);
+
+            enviarAcaoServico(
+                    CameraForegroundService.ACTION_SET_ZOOM,
+                    extras
+            );
+        };
+
+        zoomHandler.postDelayed(zoomEnvioPendente, 60);
+    }
+
+    // Aproxima o ratio do preset mais proximo (para acender o
+    // chip certo enquanto a pinça esta no meio do caminho).
+    private float arredondarPreset(float ratio) {
+
+        float[] candidatos = {1.0f, 2.0f, 3.0f, 5.0f, 8.0f};
+
+        float melhor = 1.0f;
+        float dist = Float.MAX_VALUE;
+
+        for (float c : candidatos) {
+
+            if (c > zoomMaxLocal + 0.01f) {
+                continue;
+            }
+
+            float d = Math.abs(c - ratio);
+
+            if (d < dist) {
+                dist = d;
+                melhor = c;
+            }
+        }
+
+        return melhor;
+    }
+
+    private void marcarPresetAtivo(float ratio) {
+
+        if (zoomPresets == null) {
+            return;
+        }
+
+        if (Math.abs(ratio - ultimoPresetRatio) < 0.001f) {
+            return;
+        }
+
+        ultimoPresetRatio = ratio;
+
+        for (int i = 0; i < zoomPresets.getChildCount(); i++) {
+
+            android.view.View filho =
+                    zoomPresets.getChildAt(i);
+
+            if (!(filho instanceof Button)) {
+                continue;
+            }
+
+            Button botao = (Button) filho;
+
+            boolean ativo = Math.abs(
+                    botao.getTag() != null
+                            ? (Float) botao.getTag()
+                            : 0.0f
+                            - ratio
+            ) < 0.05f;
+
+            botao.setBackgroundResource(
+                    ativo
+                            ? R.drawable.cam_pill_ativo
+                            : R.drawable.cam_pill
+            );
+
+            botao.setTextColor(
+                    ContextCompat.getColor(
+                            this,
+                            ativo
+                                    ? R.color.term_bg
+                                    : R.color.term_fg
+                    )
+            );
+        }
+    }
+
+    private void desenharZoomPresets() {
+
+        if (zoomPresets == null) {
+            return;
+        }
+
+        float max = Math.max(1.0f, zoomMaxLocal);
+
+        // Assinatura evita reconstruir a fileira a cada status
+        // (o status chega varias vezes por segundo).
+        String assinatura = lenteLocal + ":" + max;
+
+        if (assinatura.equals(presetsAssinatura)) {
+            return;
+        }
+
+        presetsAssinatura = assinatura;
+
+        zoomPresets.removeAllViews();
+
+        float densidade =
+                getResources().getDisplayMetrics().density;
+
+        // Presets estilo camera nativa: 1x, 2x, 3x, 5x, 8x...
+        // limitados ao maximo da lente atual.
+        float[] candidatos = {
+                1.0f, 2.0f, 3.0f, 5.0f, 8.0f
+        };
+
+        List<Float> presets = new ArrayList<>();
+
+        for (float c : candidatos) {
+
+            if (c <= max + 0.01f) {
+                presets.add(c);
+            }
+        }
+
+        // Garante o maximo exato como ultimo preset.
+        if (!presets.contains(max) && max > 1.01f) {
+            presets.add(max);
+        }
+
+        for (float ratio : presets) {
+
+            Button botao = new Button(this);
+
+            botao.setText(
+                    String.format(Locale.US, "%.1fx", ratio)
+            );
+            botao.setAllCaps(false);
+
+            LinearLayout.LayoutParams lp =
+                    new LinearLayout.LayoutParams(
+                            LinearLayout.LayoutParams.WRAP_CONTENT,
+                            Math.round(40 * densidade)
+                    );
+
+            lp.setMarginEnd(Math.round(8 * densidade));
+
+            botao.setLayoutParams(lp);
+
+            botao.setTag(ratio);
+
+            botao.setBackgroundResource(R.drawable.cam_pill);
+            botao.setTextColor(
+                    ContextCompat.getColor(
+                            this,
+                            R.color.term_fg
+                    )
+            );
+            botao.setTextSize(
+                    android.util.TypedValue.COMPLEX_UNIT_SP,
+                    12f
+            );
+            botao.setPadding(
+                    Math.round(16 * densidade),
+                    0,
+                    Math.round(16 * densidade),
+                    0
+            );
+            botao.setMinWidth(0);
+            botao.setMinimumWidth(
+                    Math.round(54 * densidade)
+            );
+            botao.setMinHeight(0);
+            botao.setMinimumHeight(0);
+            botao.setStateListAnimator(null);
+
+            botao.setOnClickListener(v -> irParaZoom(ratio));
+
+            zoomPresets.addView(botao);
+        }
+
+        marcarPresetAtivo(1.0f);
+    }
+
+    // ============================================================
+    // PINTURA DOS BOTOES DE CAMERA
+    // ============================================================
+
+    private void pintarFlash() {
+
+        if (flashButton == null) {
+            return;
+        }
+
+        if (flashLocal == ultimoFlash
+                && flashDisponivelLocal == ultimoFlashDisp) {
+            return;
+        }
+
+        ultimoFlash = flashLocal;
+        ultimoFlashDisp = flashDisponivelLocal;
+
+        flashButton.setText(
+                flashLocal ? "flash ON" : "flash"
+        );
+
+        flashButton.setEnabled(flashDisponivelLocal);
+
+        flashButton.setAlpha(
+                flashDisponivelLocal ? 1.0f : 0.4f
+        );
+
+        flashButton.setBackgroundResource(
+                flashLocal
+                        ? R.drawable.cam_round_ativo
+                        : R.drawable.cam_round
+        );
+
+        flashButton.setTextColor(
+                ContextCompat.getColor(
+                        this,
+                        flashLocal
+                                ? R.color.term_bg
+                                : R.color.term_fg
+                )
+        );
+    }
+
+    private void pintarLente() {
+
+        if (lenteButton == null) {
+            return;
+        }
+
+        String chave = lenteLocal + "/" + lentesDisponiveisLocal.size();
+
+        if (chave.equals(ultimaLente)) {
+            return;
+        }
+
+        ultimaLente = chave;
+
+        boolean frontal = "front".equals(lenteLocal);
+
+        lenteButton.setText(
+                frontal ? "frente" : "tras"
+        );
+
+        // Sem alternativa de lente, o botao fica indisponivel.
+        boolean alternavel =
+                lentesDisponiveisLocal.size() >= 2;
+
+        lenteButton.setEnabled(alternavel);
+        lenteButton.setAlpha(alternavel ? 1.0f : 0.4f);
+    }
+
+    private void pintarAutoRot() {
+
+        if (autoRotButton == null) {
+            return;
+        }
+
+        if (autoRotLocal == ultimoAutoRot) {
+            return;
+        }
+
+        ultimoAutoRot = autoRotLocal;
+
+        autoRotButton.setText(
+                autoRotLocal ? "auto ON" : "auto"
+        );
+
+        autoRotButton.setBackgroundResource(
+                autoRotLocal
+                        ? R.drawable.cam_round_ativo
+                        : R.drawable.cam_round
+        );
+
+        autoRotButton.setTextColor(
+                ContextCompat.getColor(
+                        this,
+                        autoRotLocal
+                                ? R.color.term_bg
+                                : R.color.term_fg
+                )
+        );
+    }
+
+    private void pintarBolinha(boolean conectado) {
+
+        if (bolinhaView == null) {
+            return;
+        }
+
+        if (conectado == ultimaConexao) {
+            return;
+        }
+
+        ultimaConexao = conectado;
+
+        bolinhaView.setBackgroundResource(
+                conectado
+                        ? R.drawable.dot_green
+                        : R.drawable.dot_red
+        );
     }
 
     private void registrarStatusReceiver() {

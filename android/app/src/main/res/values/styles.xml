@@ -84,4 +84,47 @@
         <item name="android:letterSpacing">0.18</item>
     </style>
 
+    <!-- ============================================================
+         CONTROLES ESTILO CAMERA (sobrepostos ao video)
+         ============================================================ -->
+
+    <!-- Botao redondo da coluna lateral direita. -->
+    <style name="CamRound" parent="TermText">
+        <item name="android:layout_width">58dp</item>
+        <item name="android:layout_height">58dp</item>
+        <item name="android:layout_marginTop">10dp</item>
+        <item name="android:background">@drawable/cam_round</item>
+        <item name="android:textColor">@color/term_fg</item>
+        <item name="android:textSize">9sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:textAllCaps">true</item>
+        <item name="android:letterSpacing">0.02</item>
+        <item name="android:gravity">center</item>
+        <item name="android:padding">0dp</item>
+        <item name="android:minWidth">0dp</item>
+        <item name="android:minHeight">0dp</item>
+        <item name="android:stateListAnimator">@null</item>
+        <item name="android:elevation">0dp</item>
+    </style>
+
+    <!-- Botao de preset de zoom na fileira inferior. -->
+    <style name="CamPill" parent="TermText">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">40dp</item>
+        <item name="android:layout_marginEnd">8dp</item>
+        <item name="android:background">@drawable/cam_pill</item>
+        <item name="android:textColor">@color/term_fg</item>
+        <item name="android:textSize">12sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:letterSpacing">0.02</item>
+        <item name="android:gravity">center</item>
+        <item name="android:paddingStart">16dp</item>
+        <item name="android:paddingEnd">16dp</item>
+        <item name="android:padding">0dp</item>
+        <item name="android:minWidth">54dp</item>
+        <item name="android:minHeight">0dp</item>
+        <item name="android:stateListAnimator">@null</item>
+        <item name="android:elevation">0dp</item>
+    </style>
+
 </resources>

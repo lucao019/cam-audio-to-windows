@@ -231,6 +231,8 @@ public class CameraForegroundService extends Service
     // rotacao do frame automaticamente, como no painel do PC.
     public static final String ACTION_SET_AUTO_ROTACAO =
             "com.lucao.link.ACTION_SET_AUTO_ROTACAO";
+    public static final String ACTION_SET_FLASH =
+            "com.lucao.link.ACTION_SET_FLASH";
 
     // Broadcast de status enviado de volta para a UI
 
@@ -332,6 +334,12 @@ public class CameraForegroundService extends Service
     private volatile boolean solicitarKeyframeH264 = false;
     private volatile boolean servicoAtivo = true;
     private volatile long ultimaEscritaVideo = 0;
+
+    // Falso ate o primeiro frame H.264 sair nesta conexao. O
+    // watchdog so pode derrubar a sessao depois disso - durante o
+    // aquecimento da camera nao ha frame para escrever, e usa-lo
+    // para fechar a conexao causava o loop de reconexao.
+    private volatile boolean primeiroFrameVideo = false;
     private volatile long ultimoFrameCamera = 0;
     private volatile long ultimoReinicioCamera = 0;
     private final java.util.concurrent.atomic.AtomicBoolean reconectandoVideo =
@@ -735,6 +743,17 @@ private void iniciarReconexaoVideo() {
                 );
 
                 broadcastStatus();
+
+                // Pede um keyframe novo: sem isso o encoder pode
+                // ficar esperando e nenhum byte sai pelo socket.
+                // O watchdog de 5s (sem escrita) entao derrubava a
+                // sessao em loop (VIDEO PRONTO -> SESSAO ENCERRADA).
+                solicitarKeyframeH264 = true;
+                primeiroFrameVideo = false;
+
+                // Reenvia SPS/PPS para o receiver montar o decoder
+                // logo apos a reconexao.
+                enviarCabecalhoH264();
 
                 // Com o video no ar, o PC aceita a sessao de audio.
                 iniciarAudio();
@@ -1298,6 +1317,7 @@ private void iniciarReconexaoVideo() {
                 if (
                         cameraAtiva &&
                         videoOutput != null &&
+                        primeiroFrameVideo &&
                         ultimaEscritaVideo > 0 &&
                         System.currentTimeMillis() -
                                 ultimaEscritaVideo > 5000
@@ -1345,10 +1365,14 @@ private void iniciarReconexaoVideo() {
     intent.putExtra("transporte", transporteAtivo);
     intent.putExtra("host", hostAtivo);
     intent.putExtra("lente", lenteAtual);
+    intent.putExtra("lentesDisponiveis",
+            new ArrayList<>(lentesDisponiveis));
     intent.putExtra("rotacao", rotacaoGraus);
     intent.putExtra("espelho", espelhado);
     intent.putExtra("mic", micLigado);
     intent.putExtra("autoRotacao", autoRotacao);
+    intent.putExtra("flash", flashLigado);
+    intent.putExtra("flashDisponivel", flashDisponivel);
 
     Camera camera = cameraAtual;
 
@@ -3431,6 +3455,7 @@ Log.i(
 
                     ultimaEscritaVideo =
                             System.currentTimeMillis();
+                    primeiroFrameVideo = true;
 
                 } catch (IOException e) {
 
@@ -4198,6 +4223,16 @@ Log.i(
                         );
 
                 definirMic(ligado);
+
+            } else if (ACTION_SET_FLASH.equals(action)) {
+
+                boolean ligado =
+                        intent.getBooleanExtra(
+                                "ligado",
+                                false
+                        );
+
+                aplicarFlash(ligado);
 
             } else if (ACTION_START_CAMERA.equals(action)) {
 
