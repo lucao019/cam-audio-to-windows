@@ -296,17 +296,21 @@ body {
 .palco {
   min-width: 0;
   min-height: 0;
+  position: relative;
   display: flex;
-  flex-direction: column;
   padding: 12px;
-  gap: 10px;
 }
 
 .aviso {
-  flex: 0 0 auto;
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  right: 12px;
+  z-index: 5;
   border: 1px solid var(--danger);
   border-left-width: 4px;
   color: var(--danger);
+  background: rgba(0, 0, 0, 0.72);
   padding: 8px 12px;
   font-size: 0.72rem;
   line-height: 1.5;
@@ -428,30 +432,93 @@ body {
 /* ------ CONTROLES ------ */
 
 .controles {
-  flex: 0 0 auto;
-  display: grid;
-  grid-template-columns: minmax(180px, 1fr) minmax(140px, 220px) auto;
-  gap: 18px;
-  align-items: center;
-  border: 1px solid var(--border-color);
-  padding: 10px 14px;
-  background: rgba(0, 0, 0, 0.35);
-}
-
-.controle-lente {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 4;
+  max-width: min(520px, calc(100% - 24px));
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  padding: 10px 14px;
+  /* fundo solido (sem backdrop-filter): o blur sobre o <video> em
+     movimento era o maior gargalo de fps do painel. */
+  background: rgba(10, 10, 12, 0.9);
 }
 
-#btnLente {
-  width: 100%;
-}
-
-.linha-zoom {
+/* botao que recolhe/abre a caixa de controles (oculto quando aberta:
+   pra fechar, da pra usar o botao "ocultar" dentro da propria caixa). */
+.controles-toggle {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 6;
   display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  font-family: inherit;
+  font-size: 0.7rem;
+  color: var(--primary);
+  background: rgba(10, 10, 12, 0.9);
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.controles-toggle:hover {
+  border-color: var(--primary);
+}
+
+.controles-toggle .seta {
+  font-size: 0.62rem;
+  color: var(--muted);
+}
+
+.controles.is-oculto {
+  display: none;
+}
+
+/* cabecalho da caixa: titulo + botao "ocultar" */
+.controles-topo {
+  display: flex;
+  align-items: center;
   justify-content: space-between;
-  align-items: baseline;
+  gap: 10px;
+}
+
+.controles-topo .titulo {
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--muted);
+}
+
+.controles-topo .ocultar {
+  font-family: inherit;
+  font-size: 0.66rem;
+  color: var(--primary);
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  padding: 3px 10px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.controles-topo .ocultar:hover {
+  border-color: var(--primary);
+}
+
+/* ------ ZOOM (presets tipo camera de celular) ------ */
+
+.zoom-barra {
+  display: flex;
+  align-items: center;
+  gap: 14px;
 }
 
 .rotulo {
@@ -459,47 +526,71 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.12em;
   color: var(--muted);
+  flex: 0 0 auto;
 }
 
-.valor {
+.zoom-presets {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.zoom-preset {
+  min-width: 46px;
+  padding: 5px 10px;
+  font-family: inherit;
+  font-size: 0.72rem;
+  color: var(--muted);
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: color 0.1s, border-color 0.1s, background 0.1s;
+  user-select: none;
+}
+
+.zoom-preset:hover:not(:disabled) {
+  color: var(--terminal-fg);
+  border-color: var(--primary);
+}
+
+.zoom-preset.is-ativo {
+  color: var(--terminal-bg);
+  background: var(--primary);
+  border-color: var(--primary);
+  font-weight: bold;
+}
+
+.zoom-preset:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.zoom-barra .valor {
+  margin-left: auto;
   color: var(--primary);
   font-weight: bold;
   font-size: 0.8rem;
 }
 
-#zoom {
-  width: 100%;
-  margin: 7px 0 2px;
-  accent-color: var(--primary);
-  background: transparent;
-  cursor: pointer;
-}
+/* ------ GRADE DE BOTOES (mesmo tamanho, nome dentro) ------ */
 
-#zoom:disabled {
-  cursor: not-allowed;
-  opacity: 0.35;
-}
-
-.escala {
-  display: flex;
-  justify-content: space-between;
-  font-size: 0.62rem;
-  color: var(--muted);
-}
-
-.acoes {
-  display: flex;
+.grade {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
   gap: 8px;
-  flex-wrap: wrap;
-  justify-content: flex-end;
 }
 
-.acoes .button {
+.grade .btn-grid {
+  min-height: 34px;
   font-size: 0.72rem;
-  padding: 7px 12px;
+  padding: 7px 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.acoes .button:disabled {
+.grade .btn-grid:disabled {
   opacity: 0.35;
   cursor: not-allowed;
 }

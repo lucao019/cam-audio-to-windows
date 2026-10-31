@@ -105,36 +105,35 @@
           <span class="sep" id="hudMicSep" hidden>·</span>
           <span id="hudMic" hidden>mic --</span>
         </div>
-      </div>
 
-      <!-- ------ CONTROLES ------ -->
-      <div class="controles">
-        <div class="controle-zoom">
-          <div class="linha-zoom">
+        <!-- ------ CONTROLES (caixa flutuante, agrupada num canto) ------ -->
+        <button class="controles-toggle" id="btnMostrarControles" hidden>
+          <span class="seta">▲</span> controles
+        </button>
+
+        <div class="controles" id="controles">
+          <div class="controles-topo">
+            <span class="titulo">▸ controles</span>
+            <button class="ocultar" id="btnOcultarControles">ocultar ▾</button>
+          </div>
+
+          <div class="zoom-barra">
             <span class="rotulo">zoom</span>
+            <div class="zoom-presets" id="zoomPresets"></div>
             <span class="valor" id="zoomValor">1.0x</span>
           </div>
-          <input type="range" id="zoom" min="0" max="1" step="0.01" value="0" disabled>
-          <div class="escala">
-            <span id="zoomMin">1.0x</span>
-            <span id="zoomMax">1.0x</span>
+
+          <div class="grade" id="gradeControles">
+            <button class="button btn-grid" id="btnLente" disabled>lente: --</button>
+            <button class="button btn-grid" id="btnFlash" disabled>flash: --</button>
+            <button class="button btn-grid" id="btnRotacao" disabled>girar 90°</button>
+            <button class="button btn-grid" id="btnAutoRotacao" disabled>auto girar</button>
+            <button class="button btn-grid" id="btnEspelho" disabled>espelhar</button>
+            <button class="button btn-grid" id="btnMic" disabled>mic: off</button>
+            <button class="button btn-grid" id="btnWebcam" disabled>webcam: --</button>
+            <button class="button btn-grid" id="btnReconectar" disabled>reconectar</button>
+            <button class="button btn-grid" id="btnTela" disabled>tela cheia</button>
           </div>
-        </div>
-
-        <div class="controle-lente">
-          <span class="rotulo">lente</span>
-          <button class="button" id="btnLente" disabled>lente: --</button>
-        </div>
-
-        <div class="acoes">
-          <button class="button" id="btnFlash" disabled>flash: --</button>
-          <button class="button" id="btnRotacao" disabled>girar 0°</button>
-          <button class="button" id="btnAutoRotacao" disabled>auto: on</button>
-          <button class="button" id="btnEspelho" disabled>espelho: off</button>
-          <button class="button" id="btnMic" disabled>mic: off</button>
-          <button class="button" id="btnWebcam" disabled>webcam: --</button>
-          <button class="button" id="btnReconectar" disabled>reconectar</button>
-          <button class="button" id="btnTela" disabled>tela cheia</button>
         </div>
       </div>
     </section>

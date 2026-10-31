@@ -153,7 +153,16 @@ function criarJanela() {
 
     janela.once("ready-to-show", () => janela.show());
 
-    janela.loadURL(`http://127.0.0.1:${PORTA_CONTROLE}/app/`);
+    // O painel e servido pelo nosso servidor local, que ja manda
+    // no-cache. Mas o Chromium ainda guarda HTML/JS/CSS em memoria
+    // entre aberturas. Isso garante que cada abertura pegue a versao
+    // atual do disco, sem precisar de Ctrl+R manual.
+    janela.webContents.session
+        .clearCache()
+        .catch(() => {})
+        .finally(() => {
+            janela.loadURL(`http://127.0.0.1:${PORTA_CONTROLE}/app/`);
+        });
 
     janela.webContents.setWindowOpenHandler(({ url }) => {
         shell.openExternal(url);

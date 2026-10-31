@@ -31,10 +31,8 @@
         hudCodec: document.getElementById("hudCodec"),
         hudMic: document.getElementById("hudMic"),
         hudMicSep: document.getElementById("hudMicSep"),
-        zoom: document.getElementById("zoom"),
         zoomValor: document.getElementById("zoomValor"),
-        zoomMin: document.getElementById("zoomMin"),
-        zoomMax: document.getElementById("zoomMax"),
+        zoomPresets: document.getElementById("zoomPresets"),
         btnLente: document.getElementById("btnLente"),
         btnFlash: document.getElementById("btnFlash"),
         btnRotacao: document.getElementById("btnRotacao"),
@@ -49,19 +47,69 @@
         rodapeStream: document.getElementById("rodapeStream"),
         rodapeFfmpeg: document.getElementById("rodapeFfmpeg"),
         rodapeVersao: document.getElementById("rodapeVersao"),
-        avisoFfmpeg: document.getElementById("avisoFfmpeg")
+        avisoFfmpeg: document.getElementById("avisoFfmpeg"),
+        controles: document.getElementById("controles"),
+        btnOcultarControles: document.getElementById("btnOcultarControles"),
+        btnMostrarControles: document.getElementById("btnMostrarControles")
     };
 
     const itens = new Map();
 
     let aparelhos = [];
     let selecionadoId = null;
-    let arrastandoZoom = false;
-    let timerZoom = null;
-    let timerFimZoom = null;
+    // Presets de zoom desenhados no momento (para nao redesenhar a
+    // cada status e nao perder o foco/clique do usuario).
+    let zoomPresetsChave = "";
+    let zoomAlvoPendente = null;
     let verificando = false;
     let semCodecDesde = 0;
     let timerReconexao = null;
+
+    // Cache do ultimo valor escrito em cada elemento: o poll roda a
+    // 700ms e reescrever textContent/className sem mudanca forcava
+    // repaint em cima do video (painel "travado"). So escrevemos
+    // quando o valor realmente muda.
+    const cacheTexto = new Map();  // chave -> String
+    const cacheClasse = new Map(); // chave -> String
+
+    function setTexto(el, valor) {
+        const s = valor == null ? "" : String(valor);
+
+        if (cacheTexto.get(el) === s) {
+            return;
+        }
+
+        cacheTexto.set(el, s);
+        el.textContent = s;
+    }
+
+    function setClasse(el, valor) {
+        const s = valor == null ? "" : String(valor);
+
+        if (cacheClasse.get(el) === s) {
+            return;
+        }
+
+        cacheClasse.set(el, s);
+        el.className = s;
+    }
+
+    // Alterna a classe de um elemento so se o cache mudou.
+    function setToggle(el, classe, ativo) {
+        const chave = el.id || el;
+        const mapa = cacheToggle.get(chave) || new Map();
+
+        cacheToggle.set(chave, mapa);
+
+        if (mapa.get(classe) === Boolean(ativo)) {
+            return;
+        }
+
+        mapa.set(classe, Boolean(ativo));
+        el.classList.toggle(classe, Boolean(ativo));
+    }
+
+    const cacheToggle = new Map();
 
     // Estado do alto-falante do PC (o mic do celular continua
     // capturando; isto só silencia a reproducao local).
@@ -145,8 +193,8 @@
     }
 
     function definirTagVideo(estado, texto) {
-        el.tagVideo.textContent = texto;
-        el.tagVideo.className = "tag " + estado;
+        setTexto(el.tagVideo, texto);
+        setClasse(el.tagVideo, "tag " + estado);
     }
 
     // ------------------------------------------------------------
@@ -256,12 +304,12 @@
 
         const inicio = sb.buffered.start(0);
         const atual = el.video.currentTime;
-        // Guarda so ~0.2s de historia atras do playhead: o suficiente
-        // para o MSE nao travar por seek fora do buffer e pequeno o
-        // bastante para manter o atraso baixo.
-        const alvo = atual - 0.2;
+        // Guarda ~1s de historia atras do playhead: espaco de sobra
+        // para a limpeza (que roda a cada append) nao competir com o
+        // playhead, sem manter atraso perceptivel.
+        const alvo = atual - 1.0;
 
-        if (alvo > inicio + 0.1) {
+        if (alvo > inicio + 0.25) {
             try {
                 sb.remove(inicio, alvo);
             } catch (erro) {
@@ -472,6 +520,16 @@
     // Mantem o player no fim do buffer. Um stream que comeca no
     // meio da sessao (reconexao) pode ter timeline a partir de
     // 9s; sem isso o currentTime fica abaixo do buffer e trava.
+    // Distancia alvo entre o playhead e o fim do buffer (ao vivo).
+    // ~0.35s absorve o jitter normal da rede/LAN sem estourar o
+    // atraso percebido. Antes o alvo era ~1 frame (33ms): qualquer
+    // oscilacao maior que isso disparava um seek, e seek em MSE
+    // causa re-decode - era isso que dava a sensacao de video
+    // engasgado e travava a janela.
+    const ATRASO_ALVO = 0.35;
+    // Margem para nao ficar corrigindo por diferencas irrelevantes.
+    const ATRASO_FOLGA = 0.12;
+
     function alinharAoVivo() {
         const sb = player.sb;
 
@@ -484,22 +542,17 @@
         const atual = el.video.currentTime;
 
         const fora = atual < inicio - 0.02 || atual > fim + 0.02;
-        // Ao vivo: se estiver mais de 0.05s atras do fim do buffer,
-        // pula para a borda. Segurar um buffer maior era a causa do
-        // atraso percebido de 2-3s no LAN; manter so ~1 frame
-        // (~33ms) na frente do playhead e o minimo que ainda evita
-        // micro-travadas quando o jitter da rede passa de 1 frame.
-        const atras = fim - atual > 0.05;
+        const atras = fim - atual > ATRASO_ALVO + ATRASO_FOLGA;
 
         if (player.posicionado && !fora && !atras) {
             return;
         }
 
-        const alvo = Math.max(inicio + 0.02, fim - 0.033);
+        const alvo = Math.max(inicio + 0.02, fim - ATRASO_ALVO);
 
         player.posicionado = true;
 
-        if (Math.abs(alvo - atual) > 0.05) {
+        if (Math.abs(alvo - atual) > ATRASO_FOLGA) {
             try {
                 el.video.currentTime = alvo;
             } catch (erro) {
@@ -577,6 +630,16 @@
                 if (value && value.length) {
                     player.ultimoDado = Date.now();
                     player.fila.push(value);
+
+                    // Teto de fila: se o appendBuffer nao acompanha
+                    // (decode lento/rede rapida) a fila cresce sem
+                    // limite e a memoria/CPU sobem ate congelar a
+                    // janela. Descarta os pedacos mais antigos -
+                    // melhor pular alguns frames do que travar.
+                    while (player.fila.length > 120) {
+                        player.fila.shift();
+                    }
+
                     bombear();
                 }
             }
@@ -815,12 +878,8 @@
     // ZOOM / WEBCAM
     // ------------------------------------------------------------
 
-    function ratioDeLinear(linear, max) {
-        if (!Number.isFinite(max) || max <= 1) return 1;
-
-        return 1 / (1 - linear * (1 - 1 / max));
-    }
-
+    // Converte o ratio da camera (ex.: 2.0x) para o linear 0..1 que o
+    // celular usa no setLinearZoom. linear = (1 - 1/r) / (1 - 1/max).
     function linearDeRatio(ratio, max) {
         if (!Number.isFinite(max) || max <= 1) return 0;
 
@@ -828,6 +887,82 @@
             1,
             Math.max(0, (1 - 1 / ratio) / (1 - 1 / max))
         );
+    }
+
+    // Monta a lista de presets de zoom no estilo "camera de celular"
+    // (1x, 1.5x, 2x, ...). Sempre inclui 1x e o maximo; no meio usa
+    // passos "bonitos" que caibam no intervalo disponivel.
+    function presetsDeZoom(min, max) {
+        const lo = Math.max(1, Number(min) || 1);
+        const hi = Number(max) || lo;
+
+        if (!(hi > lo)) {
+            return [lo];
+        }
+
+        const lista = [lo];
+        const candidatos = [1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10, 12, 15, 20];
+
+        for (const valor of candidatos) {
+            if (valor > lo + 1e-6 && valor < hi - 1e-6) {
+                lista.push(valor);
+            }
+        }
+
+        lista.push(hi);
+
+        return lista;
+    }
+
+    function irParaZoom(aparelho, ratio) {
+        const max = Number(aparelho.zoomMax) || 1;
+
+        zoomAlvoPendente = ratio;
+        el.zoomValor.textContent = Number(ratio).toFixed(2) + "x";
+
+        // O celular espera um linear normalizado 0..1 (setLinearZoom),
+        // nao o ratio. Convertemos aqui: linear 0 -> 1x, linear 1 -> max.
+        enviarZoom(aparelho.id, linearDeRatio(ratio, max));
+    }
+
+    // Desenha (ou so re-marca) a regua de presets. So recria o DOM
+    // quando a lista muda de verdade, pra nao perder hover/clique.
+    function desenharZoomPresets(aparelho, habilitado, atual) {
+        const max = aparelho ? (Number(aparelho.zoomMax) || 1) : 1;
+        const min = aparelho ? (Number(aparelho.zoomMin) || 1) : 1;
+        const lista = aparelho ? presetsDeZoom(min, max) : [];
+        const chave = lista.join("|");
+
+        if (chave !== zoomPresetsChave) {
+            el.zoomPresets.innerHTML = "";
+            zoomPresetsChave = chave;
+
+            for (const valor of lista) {
+                const botao = document.createElement("button");
+
+                botao.className = "zoom-preset";
+                botao.type = "button";
+                botao.dataset.ratio = String(valor);
+                botao.textContent = formatarZoom(valor);
+                el.zoomPresets.appendChild(botao);
+            }
+        }
+
+        const alvo = Number(atual) || 1;
+
+        for (const botao of el.zoomPresets.children) {
+            const ratio = Number(botao.dataset.ratio);
+            const ativo = Math.abs(ratio - alvo) / alvo < 0.06;
+
+            botao.disabled = !habilitado;
+            botao.classList.toggle("is-ativo", ativo);
+        }
+    }
+
+    function formatarZoom(valor) {
+        const n = Number(valor);
+
+        return (Number.isInteger(n) ? n : n.toFixed(1)) + "x";
     }
 
     function aparelhoSelecionado() {
@@ -952,7 +1087,8 @@
             aparelho && aparelho.online && aparelho.video
         );
 
-        el.zoom.disabled = !aparelho || !aparelho.online;
+        const zoomOk = Boolean(aparelho && aparelho.online);
+
         el.btnReconectar.disabled = !aparelho || !aparelho.online;
         el.btnTela.disabled = !aparelho;
         el.btnWebcam.disabled = !aparelho || !aparelho.online;
@@ -973,69 +1109,77 @@
         el.btnEspelho.disabled = !aparelho || !aparelho.online;
 
         if (!aparelho) {
-            el.zoomValor.textContent = "1.0x";
-            el.zoomMin.textContent = "1.0x";
-            el.zoomMax.textContent = "1.0x";
-            el.btnLente.textContent = "lente: --";
-            el.btnFlash.textContent = "flash: --";
-            el.btnFlash.classList.remove("is-success", "is-danger");
-            el.btnWebcam.textContent = "webcam: --";
-            el.btnWebcam.classList.remove("is-success", "is-danger");
-            el.btnRotacao.textContent = "girar 0°";
-            el.btnRotacao.classList.remove("is-success");
-            el.btnAutoRotacao.textContent = "auto: on";
-            el.btnAutoRotacao.classList.remove("is-success", "is-danger");
-            el.btnEspelho.textContent = "espelho: off";
-            el.btnEspelho.classList.remove("is-success", "is-danger");
+            setTexto(el.zoomValor, "1.0x");
+            desenharZoomPresets(null);
+            setTexto(el.btnLente, "lente: --");
+            setTexto(el.btnFlash, "flash: --");
+            setToggle(el.btnFlash, "is-success", false);
+            setToggle(el.btnFlash, "is-danger", false);
+            setTexto(el.btnWebcam, "webcam: --");
+            setToggle(el.btnWebcam, "is-success", false);
+            setToggle(el.btnWebcam, "is-danger", false);
+            el.btnRotacao.title = "girar 90°";
+            setToggle(el.btnRotacao, "is-success", false);
+            setToggle(el.btnRotacao, "is-warn", false);
+            el.btnAutoRotacao.title = "rotacao automatica";
+            setToggle(el.btnAutoRotacao, "is-success", false);
+            setToggle(el.btnAutoRotacao, "is-danger", false);
+            el.btnEspelho.title = "espelhar";
+            setToggle(el.btnEspelho, "is-success", false);
+            setToggle(el.btnEspelho, "is-danger", false);
             return;
         }
 
         const rotacao = Number(aparelho.rotacao) || 0;
 
-        el.btnRotacao.textContent = "girar " + rotacao + "°";
-        el.btnRotacao.classList.toggle("is-success", rotacao !== 0);
+        el.btnRotacao.title = "girar 90° (atual: " + rotacao + "°)";
+        setToggle(el.btnRotacao, "is-warn", rotacao !== 0);
+        setToggle(el.btnRotacao, "is-success", false);
 
         const autoRot = aparelho.autoRotacao !== false;
-        el.btnAutoRotacao.textContent = autoRot ? "auto: on" : "auto: off";
-        el.btnAutoRotacao.classList.toggle("is-success", autoRot);
-        el.btnAutoRotacao.classList.toggle("is-danger", !autoRot);
+        el.btnAutoRotacao.title = autoRot
+            ? "rotacao automatica: ligada"
+            : "rotacao automatica: desligada";
+        setToggle(el.btnAutoRotacao, "is-success", autoRot);
+        setToggle(el.btnAutoRotacao, "is-danger", !autoRot);
 
-        el.btnEspelho.textContent = aparelho.espelho
-            ? "espelho: on"
-            : "espelho: off";
-        el.btnEspelho.classList.toggle("is-success", Boolean(aparelho.espelho));
-        el.btnEspelho.classList.toggle("is-danger", !aparelho.espelho);
+        el.btnEspelho.title = aparelho.espelho
+            ? "espelho: ligado"
+            : "espelho: desligado";
+        setToggle(el.btnEspelho, "is-success", Boolean(aparelho.espelho));
+        setToggle(el.btnEspelho, "is-danger", !aparelho.espelho);
 
-        const max = aparelho.zoomMax || 1;
-
-        el.zoom.dataset.max = String(max);
-
-        if (!arrastandoZoom) {
-            const linear = linearDeRatio(aparelho.zoom || 1, max);
-
-            el.zoom.value = String(linear);
-            el.zoomValor.textContent =
-                Number(aparelho.zoom || 1).toFixed(2) + "x";
+        // Se o usuario acabou de clicar num preset, mostramos o alvo
+        // dele ate o celular confirmar (o status pode demorar ~150ms
+        // e voltar com o valor antigo, o que daria um "pulo" visual).
+        if (zoomAlvoPendente !== null) {
+            if (Math.abs((aparelho.zoom || 1) - zoomAlvoPendente) < 0.08) {
+                zoomAlvoPendente = null;
+            }
         }
 
-        el.zoomMin.textContent = Number(aparelho.zoomMin || 1).toFixed(1) + "x";
-        el.zoomMax.textContent = Number(max).toFixed(1) + "x";
+        const atual = zoomAlvoPendente !== null
+            ? zoomAlvoPendente
+            : (aparelho.zoom || 1);
+
+        setTexto(el.zoomValor, Number(atual).toFixed(2) + "x");
+
+        desenharZoomPresets(aparelho, zoomOk, atual);
 
         atualizarLente(aparelho, lentes);
 
-        el.btnWebcam.textContent = aparelho.webcam
-            ? "webcam: on"
-            : "webcam: off";
+        setTexto(
+            el.btnWebcam,
+            aparelho.webcam ? "webcam: on" : "webcam: off"
+        );
 
-        el.btnWebcam.classList.toggle("is-success", Boolean(aparelho.webcam));
-        el.btnWebcam.classList.toggle("is-danger", !aparelho.webcam);
+        setToggle(el.btnWebcam, "is-success", Boolean(aparelho.webcam));
+        setToggle(el.btnWebcam, "is-danger", !aparelho.webcam);
 
-        el.btnFlash.textContent = aparelho.flash
-            ? "flash: on"
-            : "flash: off";
+        setTexto(el.btnFlash, aparelho.flash ? "flash: on" : "flash: off");
 
-        el.btnFlash.classList.toggle("is-success", Boolean(aparelho.flash));
-        el.btnFlash.classList.toggle("is-danger", !aparelho.flash);
+        setToggle(el.btnFlash, "is-success", Boolean(aparelho.flash));
+        setToggle(el.btnFlash, "is-danger", !aparelho.flash);
     }
 
     // ------------------------------------------------------------
@@ -1082,34 +1226,34 @@
     function atualizarItem(refs, aparelho) {
         refs.id = aparelho.id;
 
-        refs.nome.textContent = aparelho.nome;
-        refs.transporte.textContent =
-            aparelho.transporte + (aparelho.ip ? " · " + aparelho.ip : "");
-
-        refs.statusBola.className =
-            "bolinha " + (aparelho.online ? "on" : "off");
-
-        refs.statusTexto.textContent = aparelho.online ? "online" : "offline";
-
-        refs.videoBola.className =
-            "bolinha " + (aparelho.video ? "video" : "");
-
-        refs.videoTexto.textContent = aparelho.video
-            ? "ao vivo"
-            : "sem video";
-
-        refs.fps.textContent = aparelho.fps
-            ? Number(aparelho.fps).toFixed(1)
-            : "--";
-
-        refs.kbps.textContent = aparelho.kbps
-            ? (aparelho.kbps / 1000).toFixed(1) + " mbps"
-            : "--";
-
-        refs.el.classList.toggle(
-            "is-selecionado",
-            aparelho.id === selecionadoId
+        setTexto(refs.nome, aparelho.nome);
+        setTexto(
+            refs.transporte,
+            aparelho.transporte + (aparelho.ip ? " · " + aparelho.ip : "")
         );
+
+        setClasse(
+            refs.statusBola,
+            "bolinha " + (aparelho.online ? "on" : "off")
+        );
+
+        setTexto(refs.statusTexto, aparelho.online ? "online" : "offline");
+
+        setClasse(
+            refs.videoBola,
+            "bolinha " + (aparelho.video ? "video" : "")
+        );
+
+        setTexto(refs.videoTexto, aparelho.video ? "ao vivo" : "sem video");
+
+        setTexto(refs.fps, aparelho.fps ? Number(aparelho.fps).toFixed(1) : "--");
+
+        setTexto(
+            refs.kbps,
+            aparelho.kbps ? (aparelho.kbps / 1000).toFixed(1) + " mbps" : "--"
+        );
+
+        setToggle(refs.el, "is-selecionado", aparelho.id === selecionadoId);
     }
 
     function desenharLista() {
@@ -1176,8 +1320,8 @@
         try {
             dados = await fetchJson("/api/devices");
         } catch (erro) {
-            el.tagDevices.textContent = "servidor offline";
-            el.tagDevices.className = "tag is-danger";
+            setTexto(el.tagDevices, "servidor offline");
+            setClasse(el.tagDevices, "tag is-danger");
             return;
         }
 
@@ -1185,25 +1329,26 @@
 
         const online = aparelhos.filter(item => item.online).length;
 
-        el.tagDevices.textContent = `${online} online / ${aparelhos.length}`;
-        el.tagDevices.className =
-            "tag " + (online ? "is-success" : "");
+        setTexto(el.tagDevices, `${online} online / ${aparelhos.length}`);
+        setClasse(el.tagDevices, "tag " + (online ? "is-success" : ""));
 
-        el.contagem.textContent = String(aparelhos.length);
+        setTexto(el.contagem, String(aparelhos.length));
 
         const endereco = `${dados.host}:${dados.porta}`;
 
-        el.pcHost.textContent = endereco;
-        el.rodapeHost.textContent = endereco;
+        setTexto(el.pcHost, endereco);
+        setTexto(el.rodapeHost, endereco);
 
         el.dica.innerHTML =
             "no celular: campo <b>pc host</b> = " +
             `<b>${dados.host}</b>` +
             " (wifi) · usb e automatico";
 
-        el.vazioSub.textContent =
+        setTexto(
+            el.vazioSub,
             "conecte por usb (depuração ativa) ou no celular " +
-            `informe o pc host ${dados.host}`;
+                `informe o pc host ${dados.host}`
+        );
 
         desenharLista();
 
@@ -1232,13 +1377,15 @@
         atualizarControles();
 
         if (atual) {
-            el.hudNome.textContent = atual.nome;
-            el.hudFps.textContent = atual.fps
-                ? Number(atual.fps).toFixed(1) + " fps"
-                : "-- fps";
-            el.hudKbps.textContent = atual.kbps
-                ? (atual.kbps / 1000).toFixed(1) + " mbps"
-                : "--";
+            setTexto(el.hudNome, atual.nome);
+            setTexto(
+                el.hudFps,
+                atual.fps ? Number(atual.fps).toFixed(1) + " fps" : "-- fps"
+            );
+            setTexto(
+                el.hudKbps,
+                atual.kbps ? (atual.kbps / 1000).toFixed(1) + " mbps" : "--"
+            );
         }
 
         if (atual) {
@@ -1272,12 +1419,12 @@
 
         el.hudMic.hidden = false;
         el.hudMicSep.hidden = false;
-        el.hudMic.textContent = micMudo ? "mic off" : "mic on";
-        el.hudMic.classList.toggle("is-mudo", micMudo);
+        setTexto(el.hudMic, micMudo ? "mic off" : "mic on");
+        setToggle(el.hudMic, "is-mudo", micMudo);
 
-        el.btnMic.textContent = micMudo ? "mic: off" : "mic: on";
-        el.btnMic.classList.toggle("is-danger", micMudo);
-        el.btnMic.classList.toggle("is-success", !micMudo);
+        setTexto(el.btnMic, micMudo ? "mic: off" : "mic: on");
+        setToggle(el.btnMic, "is-danger", micMudo);
+        setToggle(el.btnMic, "is-success", !micMudo);
     }
 
     // ------------------------------------------------------------
@@ -1310,46 +1457,20 @@
         setTimeout(alinharAoVivo, 0);
     });
 
-    el.zoom.addEventListener("input", () => {
+    el.zoomPresets.addEventListener("click", ev => {
+        const botao = ev.target.closest(".zoom-preset");
+
+        if (!botao || botao.disabled) {
+            return;
+        }
+
         const aparelho = aparelhoSelecionado();
 
         if (!aparelho) {
             return;
         }
 
-        const linear = Number(el.zoom.value);
-        const max = Number(el.zoom.dataset.max) || 1;
-
-        el.zoomValor.textContent = ratioDeLinear(linear, max).toFixed(2) + "x";
-
-        clearTimeout(timerZoom);
-
-        timerZoom = setTimeout(() => {
-            enviarZoom(aparelho.id, linear);
-        }, 60);
-    });
-
-    el.zoom.addEventListener("pointerdown", () => {
-        arrastandoZoom = true;
-        clearTimeout(timerFimZoom);
-    });
-
-    el.zoom.addEventListener("pointerup", () => {
-        const aparelho = aparelhoSelecionado();
-
-        if (aparelho) {
-            enviarZoom(aparelho.id, Number(el.zoom.value));
-        }
-
-        // So largamos o "arrastando" quando o setLinearZoom da camera
-        // ja teve tempo de aplicar. Assim o status que chega durante o
-        // arrasto nao reescreve o slider (era isso que fazia ele
-        // congelar e pular). Depois liberamos e o slider volta a
-        // seguir o zoom real.
-        clearTimeout(timerFimZoom);
-        timerFimZoom = setTimeout(() => {
-            arrastandoZoom = false;
-        }, 600);
+        irParaZoom(aparelho, Number(botao.dataset.ratio));
     });
 
     el.btnWebcam.addEventListener("click", () => {
@@ -1509,6 +1630,71 @@
         el.btnTela.textContent = document.fullscreenElement
             ? "sair da tela"
             : "tela cheia";
+    });
+
+    // ------------------------------------------------------------
+    // CAIXA DE CONTROLES (flutuante, esconde sozinha ao usar o video)
+    // ------------------------------------------------------------
+
+    let timerEsconderControles = null;
+    let controlesFixados = false;
+
+    function mostrarControles(mostrar) {
+        el.controles.classList.toggle("is-oculto", !mostrar);
+        el.btnMostrarControles.hidden = mostrar;
+    }
+
+    function agendarEsconderControles() {
+        if (timerEsconderControles) {
+            clearTimeout(timerEsconderControles);
+        }
+
+        timerEsconderControles = setTimeout(() => {
+            if (!controlesFixados) {
+                mostrarControles(false);
+            }
+        }, 2600);
+    }
+
+    // Qualquer interacao com a caixa mantem ela aberta mais um tempo.
+    el.controles.addEventListener("mouseenter", () => {
+        if (timerEsconderControles) {
+            clearTimeout(timerEsconderControles);
+        }
+    });
+
+    el.controles.addEventListener("mouseleave", () => {
+        if (!controlesFixados) {
+            agendarEsconderControles();
+        }
+    });
+
+    // Mouse perto do canto (ou sobre a caixa) reabre.
+    el.videoWrap.addEventListener("mousemove", ev => {
+        const caixa = el.controles.getBoundingClientRect();
+        const perto =
+            ev.clientX > caixa.left - 90 &&
+            ev.clientY > caixa.top - 90;
+
+        if (perto) {
+            mostrarControles(true);
+
+            if (timerEsconderControles) {
+                clearTimeout(timerEsconderControles);
+            }
+        } else if (!el.controles.classList.contains("is-oculto")) {
+            agendarEsconderControles();
+        }
+    });
+
+    el.btnOcultarControles.addEventListener("click", () => {
+        controlesFixados = false;
+        mostrarControles(false);
+    });
+
+    el.btnMostrarControles.addEventListener("click", () => {
+        controlesFixados = true;
+        mostrarControles(true);
     });
 
     // ------------------------------------------------------------
